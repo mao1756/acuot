@@ -9,11 +9,34 @@ Here, we record the results of our experiments so far. For the information about
 | Barrier           | Partial   | Moving barrier is more unstable | [link](exploratory/proximal/barrier) |
 | Convex Sets       | N/A       | Not implemented yet             | [link](exploratory/proximal/convex_sets) |
 
+### Unconstrained experiments
+
+| Experiment        | Status    |            Note                 |   Folder            |
+|-------------------|-----------|-------------------------------- |--------------------------------|
+| Transport of Diracs   | Fail   |   | [link](exploratory/proximal/unconstrained/[FAILS]transport_of_diracs.ipynb) |
+| 1D Gaussian Bump   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_1d_gaussian_bump.ipynb) |
+| Deformation of A Ring   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_deformation_of_ring.ipynb) |
+| CIRM Special   | Success   | Presented at CIRM for Dr. Michor's birthday  | [link](exploratory/proximal/unconstrained/[WORKS]cirm_special.ipynb) |
+
 ### Total mass constraint
 
 | Experiment        | Status    |            Note                 |   Folder            |
 |-------------------|-----------|-------------------------------- |--------------------------------|
-| SHK vs constant mass WFR    | Success   |  Comparing theoretical SHK geodesic & distance to our algorithm  | exploratory\proximal\total_mass\[WORKS]constant_mass_vs_SHK.ipynb |
+| SHK vs Constant Mass WFR    | Success   |  Comparing theoretical SHK geodesic & distance to our algorithm  | [link](exploratory/proximal/total_mass/[WORKS]constant_mass_vs_SHK.ipynb) |
+| Shrink and enlarge the same distribution    | Success   |   | [link](exploratory/proximal/total_mass/[WORKS]shrink_enlarge_same_dist.ipynb) |
+
+### Barrier Constraint
+
+| Experiment        | Status    |            Note                 |   Folder            |
+|-------------------|-----------|-------------------------------- |--------------------------------|
+| One Stationary Wall    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_one_stationary_wall.ipynb) |
+| Two Stationary Walls    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_two_stationary_wall.ipynb) |
+| One Stationary One Moving | Partial | Too big step size for the constraining function $H(t,x)$ leads to divergence| [link](exploratory/proximal/barrier/[PARTIAL]one_stationary_one_moving.ipynb)
+| Vanishing Walls | Partial | Same as above and the violation of continuity equation is higher than others | [link](exploratory/proximal/barrier/[PARTIAL]gradually_vanishing_walls.ipynb)
+
+### Convex Curve Constraint
+
+| Experiment        | Status    |            Note                 |   Folder            |
 
 
 
