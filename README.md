@@ -4,10 +4,10 @@ Here, we record the results of our experiments so far. For the information about
 ## Overall results for the proximal algorithm
 | Constraint        | Status    |            Note                 |   Folder            |
 |-------------------|-----------|-------------------------------- |--------------------------------|
-| Unconstrained     | Success   | Recreation of Chizat et al. (2018) and more | exploratory/proximal/unconstrained | 
-| Total Mass        | Success   | SHK distance is covered here    | exploratory/proximal/total_mass |
-| Barrier           | Partial   | Moving barrier is more unstable | exploratory/proximal/barrier |
-| Convex Sets       | N/A       | Not implemented yet             | exploratory/proximal/convex_sets |
+| Unconstrained     | Success   | Recreation of Chizat et al. (2018) and more |[link](exploratory/proximal/unconstrained) | 
+| Total Mass        | Success   | SHK distance is covered here    | [link](exploratory/proximal/total_mass) |
+| Barrier           | Partial   | Moving barrier is more unstable | [link](exploratory/proximal/barrier) |
+| Convex Sets       | N/A       | Not implemented yet             | [link](exploratory/proximal/convex_sets) |
 
 ### Total mass constraint
 
