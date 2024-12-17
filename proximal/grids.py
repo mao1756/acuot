@@ -294,7 +294,6 @@ class CSvar:
             * math.prod(self.U.ll[1:])
             / math.prod(self.U.cs[1:])
         )
-        # plt.plot(np.abs(np.sum(x.V.D[0]*H, axis=1)*1./256.-F), "k")
         return self.nx.sum(self.nx.abs(HU - F)) * self.U.ll[0] / self.U.cs[0]
 
     def energy(self, delta: float, p: float, q: float):
