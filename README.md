@@ -24,6 +24,7 @@ Here, we record the results of our experiments so far. For the information about
 |-------------------|-----------|-------------------------------- |--------------------------------|
 | SHK vs Constant Mass WFR    | Success   |  Comparing theoretical SHK geodesic & distance to our algorithm  | [link](exploratory/proximal/total_mass/[WORKS]constant_mass_vs_SHK.ipynb) |
 | Shrink and enlarge the same distribution    | Success   |   | [link](exploratory/proximal/total_mass/[WORKS]shrink_enlarge_same_dist.ipynb) |
+| Ours vs Jing et al. | Partial | Larger domain induces instability | [link](exploratory/proximal/total_mass/[PARTIAL]SHK_ours_vs_jing_gaussian.ipynb) |
 
 ### Barrier Constraint
 
