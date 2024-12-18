@@ -15,6 +15,8 @@ rho=zeros(Nt+1,Nx);
 rho(1, :) = rho_0;
 rho(end, :) = rho_1;
 
+Flist=zeros(N_itr, 1); % record the value of D, the WFR energy
+
 m=zeros(Nt,Nx);
 ksi=zeros(Nt,Nx);
 phi=zeros(Nt,Nx);
@@ -63,6 +65,7 @@ for k=1:N_itr
 
     % compute WFR distance
     D=1/2*sum(m.^2./rho_opt+alpha*ksi.^2./rho_opt,"all");
+    Flist(k)=D*dx*dt;
     disp(k);
     fprintf('the value of WFR is %9.6f Gap %9.3e ',D*dx*dt,R);
 end
