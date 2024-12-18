@@ -11,16 +11,15 @@
 %x_space = linspace(X(1)+dx, X(2), Nx);
 %t_space = linspace(T(1), T(2), Nt + 1);
 %rho = rand(Nt + 1, Nx)/Nx+0.0001;
-%rho(1, :) = rho_0(x_space);
-%rho(end, :) = rho_1(x_space);
+rho=zeros(Nt+1,Nx);
+rho(1, :) = rho_0;
+rho(end, :) = rho_1;
 
 m=zeros(Nt,Nx);
 ksi=zeros(Nt,Nx);
 phi=zeros(Nt,Nx);
 lam=zeros(Nt,1);
 rho_opt=rho(1:end-1,:);
-
-fprintf('Starting...');
 
 for k=1:N_itr
 
