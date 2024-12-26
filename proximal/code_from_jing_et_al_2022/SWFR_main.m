@@ -10,8 +10,8 @@
 %dt = 1 / Nt;
 %x_space = linspace(X(1)+dx, X(2), Nx);
 %t_space = linspace(T(1), T(2), Nt + 1);
-%rho = rand(Nt + 1, Nx)/Nx+0.0001;
-rho=zeros(Nt+1,Nx);
+rho = rand(Nt + 1, Nx)/Nx+0.0001;
+%rho=zeros(Nt+1,Nx);
 rho(1, :) = rho_0;
 rho(end, :) = rho_1;
 
