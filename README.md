@@ -17,6 +17,7 @@ Here, we record the results of our experiments so far. For the information about
 | 1D Gaussian Bump   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_1d_gaussian_bump.ipynb) |
 | Deformation of A Ring   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_deformation_of_ring.ipynb) |
 | CIRM Special   | Success   | Presented at CIRM for Dr. Michor's birthday  | [link](exploratory/proximal/unconstrained/[WORKS]cirm_special.ipynb) |
+| Poisson Solver Test | Fail | The Poisson solver is $O(1/N)$ whereas we need $O(1/N^2)$ | [link](exploratory/proximal/unconstrained/[FAILS]test_poisson_error.ipynb) |
 
 ### Total mass constraint
 
