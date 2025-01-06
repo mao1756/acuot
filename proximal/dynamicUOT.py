@@ -426,6 +426,7 @@ def computeGeodesic(
     niter=1000,
     alpha=None,
     gamma=None,
+    verbose=False,
 ):
     """Solve the unbalanced optimal transport problem with source using the Douglas-\
         Rachford algorithm.
@@ -516,7 +517,8 @@ def computeGeodesic(
 
     for i in range(niter):
         if i % (niter // 100) == 0:
-            print(f"\rProgress: {i // (niter // 100)}%", end="")
+            if verbose:
+                print(f"\rProgress: {i // (niter // 100)}%", end="")
 
         w, x, y, z = stepDR(
             w,
@@ -540,6 +542,7 @@ def computeGeodesic(
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment
 
-    print("\nDone.")
+    if verbose:
+        print("\nDone.")
 
     return z, (Flist, Clist, Ilist, HFlist)
