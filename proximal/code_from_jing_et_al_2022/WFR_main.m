@@ -16,6 +16,7 @@ rho(1, :) = rho_0;
 rho(end, :) = rho_1;
 
 Flist=zeros(N_itr, 1); % record the value of D, the WFR energy
+Clist= zeros(N_itr, 1); % record the value of C, the violation from the continuity equation
 
 m=zeros(Nt,Nx);
 ksi=zeros(Nt,Nx);
@@ -63,6 +64,16 @@ for k=1:N_itr
     Flist(k)=D*dx*dt;
     disp(k);
     fprintf('the value of WFR is %9.6f Gap %9.3e ',D*dx*dt,R);
+
+    %compute continuity equation
+    delta_rho=zeros(Nt, Nx);
+    for t=1:Nt-1
+        delta_rho(t,:)=rho_opt(t+1,:)-rho_opt(t,:);
+    end
+    delta_rho(Nt,:)=rho(end, :)-rho_opt(Nt,:);
+    C = div_m(m, Nx, dx) - ksi + delta_rho / dt;
+    Clist(k) = sum(C.^2, 'all')*dx*dt;
+
     %     fprintf('the value of gap is %9.3e\n',R);
     %     fprintf('the value of some ksi is %9.3e\n',sum(ksi(5,:),"all")/Nx);
 
