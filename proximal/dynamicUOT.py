@@ -475,7 +475,8 @@ def computeGeodesic(
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
-        print("Computing geodesic for standard optimal transport...")
+        if verbose:
+            print("Computing geodesic for standard optimal transport...")
         rho1 *= nx.sum(rho0) / nx.sum(rho1)
         delta = 1.0  # Ensure delta is set correctly for non-source problems
         if alpha is None:
@@ -484,11 +485,13 @@ def computeGeodesic(
             gamma = max(nx.max(rho0), nx.max(rho1)) / 2
     else:
         if H is None or F is None:
-            print("Computing a geodesic for optimal transport with source...")
+            if verbose:
+                print("Computing a geodesic for optimal transport with source...")
         else:
-            print(
-                "Computing a geodesic for optimal transport with source and constraint..."
-            )
+            if verbose:
+                print(
+                    "Computing a geodesic for optimal transport with source and constraint..."
+                )
         if alpha is None:
             alpha = 1.8
         if gamma is None:
