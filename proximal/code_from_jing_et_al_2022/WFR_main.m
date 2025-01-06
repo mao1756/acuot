@@ -11,15 +11,15 @@
 %x_space = linspace(X(1)+dx, X(2), Nx);
 %t_space = linspace(T(1), T(2), Nt + 1);
 %[X_plot, Y_plot] = meshgrid(x_space, t_space);
-rho = rand(Nt + 1, Nx)/Nx+0.0001;
-rho(1, :) = rho_0;
-rho(end, :) = rho_1;
+%rho = rand(Nt + 1, Nx)/Nx+0.0001;
+%rho(1, :) = rho_0;
+%rho(end, :) = rho_1;
 
 Flist=zeros(N_itr, 1); % record the value of D, the WFR energy
 Clist= zeros(N_itr, 1); % record the value of C, the violation from the continuity equation
 
-m=zeros(Nt,Nx);
-ksi=zeros(Nt,Nx);
+%m=zeros(Nt,Nx);
+%ksi=zeros(Nt,Nx);
 phi=zeros(Nt,Nx);
 rho_opt=rho(1:end-1,:);
 
