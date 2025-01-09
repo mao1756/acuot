@@ -20,6 +20,8 @@ Here, we record the results of our experiments so far. For the information about
 | Poisson Solver Test | Success | The Poisson solver is $O(1/N^2)$ as expected | [link](exploratory/proximal/unconstrained/[WORKS]test_poisson_error.ipynb) |
 | VS Jing et al. Scaling | Success | Test against the exact solution, ours better | [link](exploratory/proximal/unconstrained/[WORKS]ours_vs_jing_scaling.ipynb) |
 | VS Jing et al. Energy/Scaling Difference| Partial | Energy difference depends on scale, Scaling property fails for Jing | [link](exploratory/proximal/unconstrained/[PARTIAL]ours_vs_jing_energy_variance.ipynb) |
+| VS Jing et al. Continuity Equation | Success | The continuity equation is better satisfied for our algoritmh | [link](exploratory/proximal/unconstrained/[WORKS]ours_vs_jing_continuity_equation.ipynb)
+| VS Jing et al. Substitute Optimal Soln. | Success | Substituting our algorithm to their algorithm does not work well |
 
 ### Total mass constraint
 
