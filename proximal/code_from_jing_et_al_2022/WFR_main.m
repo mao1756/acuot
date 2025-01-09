@@ -23,6 +23,15 @@ Clist= zeros(N_itr, 1); % record the value of C, the violation from the continui
 phi=zeros(Nt,Nx);
 rho_opt=rho(1:end-1,:);
 
+% Recording the violation of the continuity equation for the inital condition
+delta_rho=zeros(Nt, Nx);
+for t=1:Nt-1
+    delta_rho(t,:)=rho_opt(t+1,:)-rho_opt(t,:);
+end
+delta_rho(Nt,:)=rho(end, :)-rho_opt(Nt,:);
+C_first = div_m(m, Nx, dx) - ksi + delta_rho / dt;
+C_first = sum(C_first.^2, 'all')*dx*dt;
+
 
 for k=1:N_itr
 
