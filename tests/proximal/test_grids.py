@@ -568,6 +568,48 @@ class TestCSvar:
         assert torch.allclose(z.V.D[0], 2 * x.V.D[0])
         assert torch.allclose(z.V.D[1], 2 * x.V.D[1])
 
+    def test_dilate_grid_numpy(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = np.array([[9.0, 10.0], [11.0, 12.0]])
+        U = g.Svar(cs, ll, D, Z)
+        V = g.Cvar(cs, ll, D, Z)
+        rho_0 = np.array([1.0, 2.0])
+        rho_1 = np.array([3.0, 4.0])
+        x = g.CSvar(rho_0, rho_1, cs[0], ll, U, V)
+
+        x.dilate_grid(2.0)
+        assert np.allclose(x.U.D[0], np.array([[0.5, 1], [1.5, 2]]))
+        assert np.allclose(x.U.D[1], D1)
+        assert np.allclose(x.U.Z, np.array([[4.5, 5], [5.5, 6]]))
+        assert np.allclose(x.ll, (1.0, 2.0))
+        assert np.allclose(x.cs[0], 2)
+        assert np.allclose(x.cs[1], 2)
+
+    def test_dilate_grid_torch(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        D1 = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = torch.tensor([[9.0, 10.0], [11.0, 12.0]])
+        U = g.Svar(cs, ll, D, Z)
+        V = g.Cvar(cs, ll, D, Z)
+        rho_0 = torch.tensor([1.0, 2.0])
+        rho_1 = torch.tensor([3.0, 4.0])
+        x = g.CSvar(rho_0, rho_1, cs[0], ll, U, V)
+
+        x.dilate_grid(2.0)
+        assert torch.allclose(x.U.D[0], torch.tensor([[0.5, 1], [1.5, 2]]))
+        assert torch.allclose(x.U.D[1], D1)
+        assert torch.allclose(x.U.Z, torch.tensor([[4.5, 5], [5.5, 6]]))
+        assert torch.allclose(torch.tensor(x.ll), torch.tensor([1.0, 2.0]))
+        assert torch.allclose(torch.tensor(x.cs[0]), torch.tensor(2))
+        assert torch.allclose(torch.tensor(x.cs[1]), torch.tensor(2))
+
 
 class TestFunctions:
     def test_interpT_2D_numpy(self):

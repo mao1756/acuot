@@ -275,6 +275,7 @@ class CSvar:
 
     def dilate_grid(self, s: float):
         """Apply pushforward by T:(t,x) -> (t,sx) to the variable."""
+        self.ll = tuple([self.ll[0]] + [self.ll[k] * s for k in range(1, self.N)])
         self.U.dilate_grid(s)
         self.V.dilate_grid(s)
 
@@ -285,16 +286,18 @@ class CSvar:
         for k in range(self.U.N):
             dist += self.U.nx.sum((intU.D[k] - self.V.D[k]) ** 2)
         dist += self.U.nx.sum((intU.Z - self.V.Z) ** 2)
-        return dist * math.prod(self.U.ll) / math.prod(self.U.cs)
+        return dist * math.prod(self.ll) / math.prod(self.U.cs)
 
     def dist_from_constraint(self, H, F):
         """Calculate the L2 norm of |HU-F|."""
         HU = (
             self.nx.sum(self.V.D[0] * H, axis=tuple(range(1, self.U.N)))
-            * math.prod(self.U.ll[1:])
-            / math.prod(self.U.cs[1:])
+            * math.prod(self.ll[1:])
+            / math.prod(self.cs[1:])
         )
-        return self.nx.sum(self.nx.abs(HU - F)) * self.U.ll[0] / self.U.cs[0]
+        return (
+            self.nx.sum(self.nx.abs(HU - F)) * self.ll[0] / self.cs[0]
+        )  # self.U.ll[0]
 
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
@@ -306,9 +309,7 @@ class CSvar:
         """Add two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
-        place_holder = CSvar(
-            self.rho0, self.rho1, self.U.cs[0], self.U.ll, self.U, self.V
-        )
+        place_holder = CSvar(self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V)
         place_holder.U += other.U
         place_holder.V += other.V
         return place_holder
@@ -326,9 +327,7 @@ class CSvar:
         assert self.cs == other.cs
         assert self.ll == other.ll
         assert isinstance(self.U, Svar)
-        place_holder = CSvar(
-            self.rho0, self.rho1, self.U.cs[0], self.ll, self.U, self.V
-        )
+        place_holder = CSvar(self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V)
         place_holder.U = self.U - other.U
         place_holder.V = self.V - other.V
         return place_holder
@@ -337,7 +336,7 @@ class CSvar:
         """Multiply a variable by a scalar."""
         if isinstance(other, (int, float)):
             place_holder = CSvar(
-                self.rho0, self.rho1, self.U.cs[0], self.ll, self.U, self.V
+                self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V
             )
             place_holder.U = self.U * other
             place_holder.V = self.V * other
@@ -354,8 +353,8 @@ class CSvar:
         return CSvar(
             self.rho0.copy(),
             self.rho1.copy(),
-            self.U.cs[0],
-            self.ll,
+            self.cs[0],
+            self.ll,  # self.ll
             self.U.copy(),
             self.V.copy(),
         )

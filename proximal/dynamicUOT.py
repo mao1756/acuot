@@ -311,6 +311,9 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
         F (array of shape (cs[0],)): The right-hand side of the constraint.
     """
 
+    # Make copy for debugging
+    x_copy = x.copy()
+
     projinterp_(dest, x, Q)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
 
     # Calculate HU'-F=H(Id+I^* I)^{-1}(U+I*V)-F
@@ -353,6 +356,29 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
 
     # Calculate V' = I(U)
     dest.interp_()
+
+    """
+    # Checking if the first order condition
+    # U'-U_copy + I*(V'-V_copy) + H^* lambda = 0
+    # is satisfied
+
+    # Calculate I*(V'-V_copy)
+    print(dest.V.ll, x_copy.V.ll)
+    V_diff = dest.V - x_copy.V
+    interpT_V_diff = grids.interpT(V_diff)
+
+    # Calculate the staggered variable H^* lambda
+    U_hstar_lambda = grids.Svar(V_diff.cs, V_diff.ll)
+    U_hstar_lambda.D[0] = Hstar_lambda
+
+    # Calculate U'-U_copy + I*(V'-V_copy) + H^* lambda
+    first_order_condition = dest.U - x_copy.U + interpT_V_diff + U_hstar_lambda
+
+    # Calculate the norm for each dimension
+    for dens in first_order_condition.D:
+        dens_norm = dest.nx.norm(dens)
+        print("First order condition norm: ", dens_norm)
+    """
 
 
 def precomputeProjInterp(cs, rho0, rho1):
@@ -505,7 +531,7 @@ def computeGeodesic(
         var.dilate_grid(1 / delta)
         var.rho1 *= delta**rho0.ndim
         var.rho0 *= delta**rho0.ndim
-    F = F * delta**rho0.ndim if F is not None else None
+    # F = F * delta**rho0.ndim if F is not None else None
 
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, rho0, rho1)
