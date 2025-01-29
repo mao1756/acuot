@@ -246,7 +246,7 @@ def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
     dest[...] = invQ_slices
 
 
-def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
+def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     """Calculate the projection of the interpolation operator for x.
 
     Given the input x=(U,V), calculate the projection of the interpolation operator by
@@ -283,11 +283,18 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
     # only need to divide by 2 here)
     dest.U.Z *= 0.5
 
+    # Log the norm of U'
+    if log is not None:
+        dens_norm = 0
+        for dens in dest.U.D:
+            dens_norm += dest.nx.norm(dens) ** 2
+        log["U_prime_interp"].append(dest.nx.sqrt(dens_norm))
+
     # Calculate V' = I(U) and store it in V'
     dest.interp_()
 
 
-def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
+def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log):
     """Calculate the projection of the interpolation and constraint operator for x.
 
     Given the input x=(U,V), calculate the projection of interpolation&constraint
@@ -309,12 +316,12 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
             h is the H function for the constraint.
         H (array of shape cs): The H function for the constraint.
         F (array of shape (cs[0],)): The right-hand side of the constraint.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
     """
 
-    # Make copy for debugging
-    x_copy = x.copy()
-
-    projinterp_(dest, x, Q)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
+    projinterp_(dest, x, Q, log)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
 
     # Calculate HU'-F=H(Id+I^* I)^{-1}(U+I*V)-F
     pre_lambda = (
@@ -322,9 +329,11 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
         * (math.prod(dest.ll[1:]) / math.prod(dest.cs[1:]))
         - F
     )
+    log["pre_lambda"].append(dest.nx.norm(pre_lambda))
 
     # Calculate lambda = (H(Id+I^* I)^{-1}H*)^{-1}(HU'-F)
     lambda_ = dest.nx.solve(HQH, pre_lambda)
+    log["lambda"].append(dest.nx.norm(lambda_))
 
     # Calculate h* lambda
     Hstar_lambda = (
@@ -347,6 +356,8 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
         axis=0,
     )
     Hstar_lambda = ((cat + dest.nx.roll(cat, -1, axis=0)) / 2)[tuple(slices)]
+    # Copy for debugging
+    Hstar_lambda_copy = Hstar_lambda.copy()
 
     # Calculate U' = Q^{-1}H^* lambda
     invQ_mul_A_(Hstar_lambda, Q[0], Hstar_lambda, 0, dest.nx)
@@ -357,28 +368,27 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
     # Calculate V' = I(U)
     dest.interp_()
 
-    """
     # Checking if the first order condition
     # U'-U_copy + I*(V'-V_copy) + H^* lambda = 0
     # is satisfied
 
     # Calculate I*(V'-V_copy)
-    print(dest.V.ll, x_copy.V.ll)
-    V_diff = dest.V - x_copy.V
+    V_diff = dest.V - x.V
     interpT_V_diff = grids.interpT(V_diff)
 
     # Calculate the staggered variable H^* lambda
-    U_hstar_lambda = grids.Svar(V_diff.cs, V_diff.ll)
-    U_hstar_lambda.D[0] = Hstar_lambda
+    U_hstar_lambda = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll)
+    U_hstar_lambda.U.D[0] = Hstar_lambda_copy
+    U_hstar_lambda = U_hstar_lambda.U
 
     # Calculate U'-U_copy + I*(V'-V_copy) + H^* lambda
-    first_order_condition = dest.U - x_copy.U + interpT_V_diff + U_hstar_lambda
+    first_order_condition = dest.U - x.U + interpT_V_diff + U_hstar_lambda
 
+    dens_norm = 0
     # Calculate the norm for each dimension
     for dens in first_order_condition.D:
-        dens_norm = dest.nx.norm(dens)
-        print("First order condition norm: ", dens_norm)
-    """
+        dens_norm += dest.nx.norm(dens) ** 2
+    log["first_order_condition"].append(dest.nx.sqrt(dens_norm))
 
 
 def precomputeProjInterp(cs, rho0, rho1):
@@ -416,6 +426,10 @@ def precomputeHQH(Q, H, cs, ll):
     Q_inv = nx.inv(Q)
     Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
     IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]
+    print("Norm of H_sum:", nx.norm(H_sum))
+    print("Norm of IQ_plus_Q:", nx.norm(IQ_plus_Q))
+    print(ll, cs)
+    print("Multiplier:", (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2)
     return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
@@ -453,6 +467,7 @@ def computeGeodesic(
     alpha=None,
     gamma=None,
     verbose=False,
+    log=None,
 ):
     """Solve the unbalanced optimal transport problem with source using the Douglas-\
         Rachford algorithm.
@@ -476,6 +491,12 @@ def computeGeodesic(
         q (float): The q-norm for the energy functional.
         delta (float): The scaling factor for the grid.
         niter (int): The number of iterations for the algorithm.
+        alpha (float): The step size for the Douglas-Rachford algorithm.
+        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
+        verbose (bool): If True, print the progress of the algorithm.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
 
     Returns:
         z (CSvar): The optimal transport solution.
@@ -495,9 +516,9 @@ def computeGeodesic(
 
     def prox2(y, x, Q, HQH=None, H=None, F=None):
         if HQH is None or H is None or F is None:
-            projinterp_(y, x, Q)
+            projinterp_(y, x, Q, log)
         else:
-            projinterp_constraint_(y, x, Q, HQH, H, F)
+            projinterp_constraint_(y, x, Q, HQH, H, F, log)
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
@@ -536,6 +557,12 @@ def computeGeodesic(
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, rho0, rho1)
     HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
+    if H is not None:
+        print("Norm of Q[0]:", nx.norm(Q[0]))
+        print("Norm of HQH:", nx.norm(HQH))
+        import numpy as np
+
+        print("Condition number of HQH:", np.linalg.cond(HQH))
 
     Flist, Clist, Ilist = (
         nx.zeros(niter, type_as=rho0),
