@@ -215,11 +215,11 @@ class Svar(Var):
 
 
 class CSvar:
-    """ A pair of staggered and centered variables.
+    """A pair of staggered and centered variables.
 
     Attributes:
         nx (Backend) : The backend module used for computation such as numpy or torch.
-        cs (tuple) : The size of the centered grid. cs[0] is the size of time dimension\
+        cs (tuple) : The size of the centered grid. cs[0] is the size of time dimension
         and cs[1:] is the size of the space dimension.
         ll (tuple) : size of time x space domain.
         U (Svar) : The staggered variable.
@@ -227,7 +227,28 @@ class CSvar:
 
     """
 
-    def __init__(self, rho0, rho1, T: int, ll: tuple, U: Svar = None, V: Cvar = None):
+    def __init__(
+        self,
+        rho0,
+        rho1,
+        T: int,
+        ll: tuple,
+        init: str = None,
+        U: Svar = None,
+        V: Cvar = None,
+    ):
+        """Initialize the staggered and centered variables.
+
+        Args:
+            rho0 (array-like) : The initial density at time 0.
+            rho1 (array-like) : The final density at time T.
+            T (int) : The number of time steps.
+            ll (tuple) : The size of time x space domain.
+            init (str) : The initialization method. If None, the variables are initialized by linear interpolation. If 'fisher-rao', the variables are initialized by the Fisher-Rao geodesic. \
+            If 'manual', the variables are initialized by the user using the U and V arguments.
+            U (Svar) : The staggered variable if init is 'manual'. Ignored if init is not 'manual'.
+            V (Cvar) : The centered variable if init is 'manual'. Ignored if init is not 'manual'.
+        """
         self.N = len(rho0.shape) + 1
         self.nx = get_backend_ext(rho0, rho1)
         self.cs = (T,) + rho0.shape
@@ -235,13 +256,45 @@ class CSvar:
         self.rho0 = self.nx.copy(rho0)
         self.rho1 = self.nx.copy(rho1)
         # Initialize U and V
+
+        if init is None or init == "fisher-rao":
+            N = len(rho0.shape) + 1
+            cs = (T,) + rho0.shape
+            shapes_staggered = get_staggered_shape(cs)
+            D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
+            if init is None:
+                D[0] = linear_interpolation(rho0, rho1, T)
+                Z = self.nx.stack([rho1 - rho0] * cs[0], axis=0)
+            else:
+                D[0] = fisher_rao_geodesic(rho0, rho1, T)
+                Z = fisher_rao_source(rho0, rho1, T)
+            self.U = Svar(cs, ll, D, Z)
+            self.V = interp(self.U)
+        elif init == "manual":
+            if U is None or V is None:
+                raise ValueError("U and V must be provided for manual initialization.")
+            self.U = Svar(
+                U.cs,
+                U.ll,
+                [self.nx.copy(U.D[k]) for k in range(U.N)],
+                self.nx.copy(U.Z),
+            )
+            self.V = Cvar(
+                self.cs,
+                ll,
+                V.D,
+                V.Z,
+            )
+        else:
+            raise ValueError("Invalid initialization method.")
+        """
         if U is None:
             N = len(rho0.shape) + 1
             cs = (T,) + rho0.shape
             shapes_staggered = get_staggered_shape(cs)
             D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
             D[0] = linear_interpolation(rho0, rho1, T)
-            Z = self.nx.zeros(cs, type_as=rho0)
+            Z = self.nx.stack([rho1 - rho0] * cs[0], axis = 0)
             self.U = Svar(cs, ll, D, Z)
         else:
             self.U = Svar(
@@ -259,6 +312,7 @@ class CSvar:
                 V.D,
                 V.Z,
             )
+        """
 
     def interp_(self):
         """Interpolate U to V in-place."""
@@ -309,7 +363,9 @@ class CSvar:
         """Add two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
-        place_holder = CSvar(self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V)
+        place_holder = CSvar(
+            self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
+        )
         place_holder.U += other.U
         place_holder.V += other.V
         return place_holder
@@ -327,7 +383,9 @@ class CSvar:
         assert self.cs == other.cs
         assert self.ll == other.ll
         assert isinstance(self.U, Svar)
-        place_holder = CSvar(self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V)
+        place_holder = CSvar(
+            self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
+        )
         place_holder.U = self.U - other.U
         place_holder.V = self.V - other.V
         return place_holder
@@ -336,7 +394,7 @@ class CSvar:
         """Multiply a variable by a scalar."""
         if isinstance(other, (int, float)):
             place_holder = CSvar(
-                self.rho0, self.rho1, self.cs[0], self.ll, self.U, self.V
+                self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
             )
             place_holder.U = self.U * other
             place_holder.V = self.V * other
@@ -355,6 +413,7 @@ class CSvar:
             self.rho1.copy(),
             self.cs[0],
             self.ll,  # self.ll
+            "manual",
             self.U.copy(),
             self.V.copy(),
         )
@@ -384,6 +443,41 @@ def linear_interpolation(r0, r1, T: int):
     t = nx.linspace(0, 1, T + 1, type_as=r0)
     t = t.reshape(-1, *([1] * len(r0.shape)))
     return t * r1 + (1 - t) * r0
+
+
+def fisher_rao_geodesic(r0, r1, T: int):
+    """Given two densities r0 and r1, return the Fisher-Rao geodesic between them on a time staggered grid.
+
+    Args:
+        r0 (array-like) : The initial density.
+        r1 (array-like) : The final density.
+        T (int) : The number of time steps.
+
+    Returns:
+        array-like : The Fisher-Rao geodesic between r0 and r1.
+    """
+    nx = get_backend_ext(r0, r1)
+    t = nx.linspace(0, 1, T + 1, type_as=r0)
+    t = t.reshape(-1, *([1] * len(r0.shape)))
+    return (t * nx.sqrt(r1) + (1 - t) * nx.sqrt(r0)) ** 2
+
+
+def fisher_rao_source(r0, r1, T: int):
+    """Given two densities r0 and r1, return the source term of the Fisher-Rao geodesic between them on a time centered grid.
+
+    Args:
+        r0 (array-like) : The initial density.
+        r1 (array-like) : The final density.
+        T (int) : The number of time steps.
+
+    Returns:
+        array-like : The source term of the Fisher-Rao geodesic between r0 and r1.
+    """
+
+    nx = get_backend_ext(r0, r1)
+    t = nx.linspace(0.5 / T, 1 - 0.5 / T, T, type_as=r0)
+    t = t.reshape(-1, *([1] * len(r0.shape)))
+    return 2 * (nx.sqrt(r1) - nx.sqrt(r0)) * (t * nx.sqrt(r1) + (1 - t) * nx.sqrt(r0))
 
 
 def interp_(V: Cvar, U: Svar):  # in-place interpolation

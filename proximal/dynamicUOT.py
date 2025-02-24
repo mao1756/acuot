@@ -294,7 +294,7 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     dest.interp_()
 
 
-def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log):
+def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=None):
     """Calculate the projection of the interpolation and constraint operator for x.
 
     Given the input x=(U,V), calculate the projection of interpolation&constraint
@@ -320,6 +320,13 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log)
             order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
             'first_order_condition' and the values are lists to store the norms.
     """
+    if log is None:
+        log = {
+            "pre_lambda": [],
+            "lambda": [],
+            "first_order_condition": [],
+            "U_prime_interp": [],
+        }
 
     projinterp_(dest, x, Q, log)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
 
@@ -468,6 +475,9 @@ def computeGeodesic(
     gamma=None,
     verbose=False,
     log=None,
+    init=None,
+    U=None,
+    V=None,
 ):
     """Solve the unbalanced optimal transport problem with source using the Douglas-\
         Rachford algorithm.
@@ -497,6 +507,12 @@ def computeGeodesic(
         log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
             order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
             'first_order_condition' and the values are lists to store the norms.
+        init (str) : The initialization method for the algorithm. If None, the algorithm \
+            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
+            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
+            use the provided U and V as the initialization.
+        U (array): The initial value for U if init='manual'.
+        V (array): The initial value for V if init='manual'.
 
     Returns:
         z (CSvar): The optimal transport solution.
@@ -544,15 +560,14 @@ def computeGeodesic(
         if gamma is None:
             gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
 
-    # Initialize using linear interpolation
-    w, x, y, z = [grids.CSvar(rho0, rho1, T, ll) for _ in range(4)]
+    # Initialization
+    w, x, y, z = [grids.CSvar(rho0, rho1, T, ll, init, U, V) for _ in range(4)]
 
     # Change of variable for scale adjustment
     for var in [w, x, y, z]:
         var.dilate_grid(1 / delta)
         var.rho1 *= delta**rho0.ndim
         var.rho0 *= delta**rho0.ndim
-    # F = F * delta**rho0.ndim if F is not None else None
 
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, rho0, rho1)

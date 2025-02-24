@@ -579,7 +579,7 @@ class TestCSvar:
         V = g.Cvar(cs, ll, D, Z)
         rho_0 = np.array([1.0, 2.0])
         rho_1 = np.array([3.0, 4.0])
-        x = g.CSvar(rho_0, rho_1, cs[0], ll, U, V)
+        x = g.CSvar(rho_0, rho_1, cs[0], ll, "manual", U, V)
 
         x.dilate_grid(2.0)
         assert np.allclose(x.U.D[0], np.array([[0.5, 1], [1.5, 2]]))
@@ -600,7 +600,7 @@ class TestCSvar:
         V = g.Cvar(cs, ll, D, Z)
         rho_0 = torch.tensor([1.0, 2.0])
         rho_1 = torch.tensor([3.0, 4.0])
-        x = g.CSvar(rho_0, rho_1, cs[0], ll, U, V)
+        x = g.CSvar(rho_0, rho_1, cs[0], ll, "manual", U, V)
 
         x.dilate_grid(2.0)
         assert torch.allclose(x.U.D[0], torch.tensor([[0.5, 1], [1.5, 2]]))
