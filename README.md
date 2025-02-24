@@ -39,7 +39,11 @@ Here, we record the results of our experiments so far. For the information about
 | One Stationary Wall    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_one_stationary_wall.ipynb) |
 | Two Stationary Walls    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_two_stationary_wall.ipynb) |
 | One Stationary One Moving | Partial | Too big step size for the constraining function $H(t,x)$ leads to divergence| [link](exploratory/proximal/barrier/[PARTIAL]one_stationary_one_moving.ipynb)
-| Vanishing Walls | Partial | Same as above and the violation of continuity equation is higher than others | [link](exploratory/proximal/barrier/[PARTIAL]gradually_vanishing_walls.ipynb)
+| Vanishing Walls | Partial | Same as above and the violation of continuity equation is higher than others | [link](exploratory/proximal/barrier/[PARTIAL]gradually_vanishing_walls.ipynb) |
+| Walls Do Not Touch Mass | Fails | Large step size of H makes the algo divergent | [link](exploratory\proximal\barrier\[FAILS]walls_do_not_touch_mass.ipynb)|
+| Splitting Cells | Partial | The domain splits in two. Similar results as previously (small H stepsize => convergent) | [link](exploratory\proximal\barrier\[PARTIAL]]splitting_cells.ipynb) |
+| Instability Analysis | Partial | Record the norms of the Lagrange multipliers. Barrier constraints have large norms in general. | [link](exploratory\proximal\barrier\[PARTIAL]instability_analysis.ipynb) |
+| HQH projection on Fisher-Rao | Partial | Compare numerical values before and after HQH projection with the Wall Do Not Touch Mass experiment. Mass on barriers increase. | [link](exploratory\proximal\barrier\[PARTIAL]instability_analysis.ipynb) |
 
 ### Convex Curve Constraint
 
