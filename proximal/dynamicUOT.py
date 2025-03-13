@@ -387,8 +387,6 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     )
     # Calculate the difference
     diff = pre_lambda - HV_HQHlambda
-    print("HQHlambda - pre_lambda:", diff)
-    print("Norm of HQHlambda - pre_lambda:", dest.nx.norm(diff))
     log["HQHlambda"].append(dest.nx.norm(diff))
 
     # Calculate U' = Q^{-1}(U+I*V)-Q^{-1}H^* lambda
@@ -458,10 +456,6 @@ def precomputeHQH(Q, H, cs, ll):
     Q_inv = nx.inv(Q)
     Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
     IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]
-    print("Norm of H_sum:", nx.norm(H_sum))
-    print("Norm of IQ_plus_Q:", nx.norm(IQ_plus_Q))
-    print(ll, cs)
-    print("Multiplier:", (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2)
     return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
@@ -597,12 +591,6 @@ def computeGeodesic(
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, rho0, rho1)
     HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
-    if H is not None:
-        print("Norm of Q[0]:", nx.norm(Q[0]))
-        print("Norm of HQH:", nx.norm(HQH))
-        import numpy as np
-
-        print("Condition number of HQH:", np.linalg.cond(HQH))
 
     Flist, Clist, Ilist = (
         nx.zeros(niter, type_as=rho0),
