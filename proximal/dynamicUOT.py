@@ -250,7 +250,8 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     """Calculate the projection of the interpolation operator for x.
 
     Given the input x=(U,V), calculate the projection of the interpolation operator by
-    U' = Q^-1(U+I*V) and V' = I(U) where I is the interpolation operator.
+    U' = Q^-1(U+I*V) and V' = I(U')
+    where I is the interpolation operator.
     Here, Q = Id+I*I. The result is stored in dest=(U',V').
 
     Args:
@@ -326,6 +327,8 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
             "lambda": [],
             "first_order_condition": [],
             "U_prime_interp": [],
+            "HQHlambda": [],
+            "lambda_eqn": [],
         }
 
     projinterp_(dest, x, Q, log)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
@@ -341,6 +344,9 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     # Calculate lambda = (H(Id+I^* I)^{-1}H*)^{-1}(HU'-F)
     lambda_ = dest.nx.solve(HQH, pre_lambda)
     log["lambda"].append(dest.nx.norm(lambda_))
+
+    # Verify the equation HQH lambda = pre_lambda
+    log["lambda_eqn"].append(dest.nx.norm(HQH @ lambda_ - pre_lambda))
 
     # Calculate h* lambda
     Hstar_lambda = (
@@ -369,8 +375,27 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     # Calculate U' = Q^{-1}H^* lambda
     invQ_mul_A_(Hstar_lambda, Q[0], Hstar_lambda, 0, dest.nx)
 
+    # HQ^{-1}H^* lambda = HQHlambda. This should be equal to HQ^{-1}(U+I*V)
+    HQHlambda = [dest.nx.zeros(d.shape) for d in dest.U.D]
+    HQHlambda[0] = Hstar_lambda
+    U_HQHlambda = grids.Svar(x.cs, x.ll, HQHlambda, dest.nx.zeros(x.cs))
+    V_HQHlambda = grids.interp(U_HQHlambda)
+    HV_HQHlambda = (
+        dest.nx.sum(H * V_HQHlambda.D[0], axis=tuple(range(1, H.ndim)))
+        * math.prod(dest.ll[1:])
+        / math.prod(dest.cs[1:])
+    )
+    # Calculate the difference
+    diff = pre_lambda - HV_HQHlambda
+    print("HQHlambda - pre_lambda:", diff)
+    print("Norm of HQHlambda - pre_lambda:", dest.nx.norm(diff))
+    log["HQHlambda"].append(dest.nx.norm(diff))
+
     # Calculate U' = Q^{-1}(U+I*V)-Q^{-1}H^* lambda
     dest.U.D[0] -= Hstar_lambda
+
+    # project positivity
+    # dest.U.proj_positive()
 
     # Calculate V' = I(U)
     dest.interp_()

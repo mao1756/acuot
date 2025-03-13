@@ -265,6 +265,7 @@ class CSvar:
             if init is None:
                 D[0] = linear_interpolation(rho0, rho1, T)
                 Z = self.nx.stack([rho1 - rho0] * cs[0], axis=0)
+                # Z = self.nx.zeros(cs, type_as=rho0)
             else:
                 D[0] = fisher_rao_geodesic(rho0, rho1, T)
                 Z = fisher_rao_source(rho0, rho1, T)
