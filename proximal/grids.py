@@ -96,6 +96,12 @@ class Var:
         """Multiply a variable by a scalar."""
         return self.__mul__(other)
 
+    def norm(self):
+        """Compute the L2 norm of the variable."""
+        return math.sqrt(
+            self.nx.sum([self.nx.sum(Dk**2) for Dk in self.D]) + self.nx.sum(self.Z**2)
+        )
+
 
 class Cvar(Var):
     """A class for centered variales.
@@ -257,7 +263,7 @@ class CSvar:
         self.rho1 = self.nx.copy(rho1)
         # Initialize U and V
 
-        if init is None or init == "fisher-rao":
+        if init is None or init == "fisher-rao" or init == "zero":
             N = len(rho0.shape) + 1
             cs = (T,) + rho0.shape
             shapes_staggered = get_staggered_shape(cs)
@@ -265,10 +271,11 @@ class CSvar:
             if init is None:
                 D[0] = linear_interpolation(rho0, rho1, T)
                 Z = self.nx.stack([rho1 - rho0] * cs[0], axis=0)
-                # Z = self.nx.zeros(cs, type_as=rho0)
-            else:
+            elif init == "fisher-rao":
                 D[0] = fisher_rao_geodesic(rho0, rho1, T)
                 Z = fisher_rao_source(rho0, rho1, T)
+            elif init == "zero":
+                Z = self.nx.zeros(cs, type_as=rho0)
             self.U = Svar(cs, ll, D, Z)
             self.V = interp(self.U)
         elif init == "manual":
@@ -288,32 +295,6 @@ class CSvar:
             )
         else:
             raise ValueError("Invalid initialization method.")
-        """
-        if U is None:
-            N = len(rho0.shape) + 1
-            cs = (T,) + rho0.shape
-            shapes_staggered = get_staggered_shape(cs)
-            D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
-            D[0] = linear_interpolation(rho0, rho1, T)
-            Z = self.nx.stack([rho1 - rho0] * cs[0], axis = 0)
-            self.U = Svar(cs, ll, D, Z)
-        else:
-            self.U = Svar(
-                U.cs,
-                U.ll,
-                [self.nx.copy(U.D[k]) for k in range(U.N)],
-                self.nx.copy(U.Z),
-            )
-        if V is None:
-            self.V = interp(self.U)
-        else:
-            self.V = Cvar(
-                self.cs,
-                ll,
-                V.D,
-                V.Z,
-            )
-        """
 
     def interp_(self):
         """Interpolate U to V in-place."""
@@ -418,6 +399,10 @@ class CSvar:
             self.U.copy(),
             self.V.copy(),
         )
+
+    def norm(self):
+        """Compute the L2 norm of the variable."""
+        return math.sqrt(self.U.norm() ** 2 + self.V.norm() ** 2)
 
 
 def get_staggered_shape(cs: tuple):

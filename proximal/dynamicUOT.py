@@ -392,9 +392,6 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     # Calculate U' = Q^{-1}(U+I*V)-Q^{-1}H^* lambda
     dest.U.D[0] -= Hstar_lambda
 
-    # project positivity
-    # dest.U.proj_positive()
-
     # Calculate V' = I(U)
     dest.interp_()
 
@@ -419,6 +416,52 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     for dens in first_order_condition.D:
         dens_norm += dest.nx.norm(dens) ** 2
     log["first_order_condition"].append(dest.nx.sqrt(dens_norm))
+
+
+def projinterp_constraint_dykstra(
+    dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, eps=10e-3, maxiter=1000, log=None
+):
+    """Calculate the projection of the interpolation, constraint operator AND positivity for x.
+
+    Given the input x=(U,V), calculate the projection of interpolation&constraint
+    operator AND positivity constraint using the Dykstra algorithm. We alternatively apply the projection of the interpolation/constraint operator and the positivity constraint.
+
+    Args:
+        dest (CSvar): The destination variable.
+        x (CSvar): The input variable.
+        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where\
+        Qk = Id + I^T I such that I is the interpolation matrix.
+        HQH (array of shape (cs[0], cs[0])): The matrix HQ^{-1}H* where H=hI and \
+            h is the H function for the constraint.
+        H (array of shape cs): The H function for the constraint.
+        F (array of shape (cs[0],)): The right-hand side of the constraint.
+        eps (float): The tolerance for the algorithm.
+        maxiter (int): The maximum number of iterations for the algorithm.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
+    """
+    p = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
+    q = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
+    y = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
+    x_new = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
+    tolerance = float("inf")
+    niter = 0
+    while tolerance > eps and niter < maxiter:
+        niter += 1
+        projinterp_constraint_(y, x + p, Q, HQH, H, F, log)
+        p = x + p - y
+        x_new = y + q
+        x_new.proj_positive()
+        q = y + q - x_new
+        tolerance = (x - x_new).norm()
+        x = x_new
+
+    if niter == maxiter:
+        print("Dykstra algorithm did not converge. Increase the number of iterations.")
+
+    dest.U = x.U
+    dest.V = x.V
 
 
 def precomputeProjInterp(cs, rho0, rho1):
@@ -490,6 +533,9 @@ def computeGeodesic(
     q=2.0,
     delta=1.0,
     niter=1000,
+    dykstra=True,
+    eps=10e-3,
+    niter_dykstra=500,
     alpha=None,
     gamma=None,
     verbose=False,
@@ -520,6 +566,8 @@ def computeGeodesic(
         q (float): The q-norm for the energy functional.
         delta (float): The scaling factor for the grid.
         niter (int): The number of iterations for the algorithm.
+        dykstra (bool): If True, use the Dykstra algorithm to enforce the positivity constraint.
+        eps (float): The tolerance for the Dykstra algorithm.
         alpha (float): The step size for the Douglas-Rachford algorithm.
         gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
         verbose (bool): If True, print the progress of the algorithm.
@@ -549,11 +597,18 @@ def computeGeodesic(
         projCE_(y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
         proxF_(y.V, x.V, gamma, p, q)
 
-    def prox2(y, x, Q, HQH=None, H=None, F=None):
+    def prox2(
+        y, x, Q, HQH=None, H=None, F=None, dykstra=False, eps=10e-3, niter_dykstra=1000
+    ):
         if HQH is None or H is None or F is None:
             projinterp_(y, x, Q, log)
         else:
-            projinterp_constraint_(y, x, Q, HQH, H, F, log)
+            if dykstra:
+                projinterp_constraint_dykstra(
+                    y, x, Q, HQH, H, F, eps=10e-3, maxiter=niter_dykstra, log=log
+                )
+            else:
+                projinterp_constraint_(y, x, Q, HQH, H, F, log)
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
@@ -600,6 +655,7 @@ def computeGeodesic(
     HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
 
     for i in range(niter):
+        print("Iteration:", i)
         if i % (niter // 100) == 0:
             if verbose:
                 print(f"\rProgress: {i // (niter // 100)}%", end="")
@@ -610,7 +666,7 @@ def computeGeodesic(
             y,
             z,
             lambda y, x: prox1(y, x, source, gamma, p, q),
-            lambda y, x: prox2(y, x, Q, HQH, H, F),
+            lambda y, x: prox2(y, x, Q, HQH, H, F, dykstra, eps, niter_dykstra),
             alpha,
         )
 
