@@ -456,6 +456,7 @@ def projinterp_constraint_dykstra(
         q = y + q - x_new
         tolerance = (x - x_new).norm()
         x = x_new
+        print(niter, tolerance)
 
     if niter == maxiter:
         print("Dykstra algorithm did not converge. Increase the number of iterations.")
@@ -655,7 +656,6 @@ def computeGeodesic(
     HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
 
     for i in range(niter):
-        print("Iteration:", i)
         if i % (niter // 100) == 0:
             if verbose:
                 print(f"\rProgress: {i // (niter // 100)}%", end="")
