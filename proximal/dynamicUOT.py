@@ -1,6 +1,11 @@
 import proximal.grids as grids
 from proximal.backend_extension import get_backend_ext
+from proximal.backend_extension import NumpyBackend_ext
 from ot.backend import Backend
+from ot.utils import list_to_array
+import numpy as np
+import scipy.sparse as sps
+import scipy.sparse.linalg as spsla
 import math
 
 
@@ -503,6 +508,384 @@ def precomputeHQH(Q, H, cs, ll):
     return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
+def flatten_array(arr, fastest_axis: int = 0):
+    """
+    Flatten `arr` into a 1D vector, making `fastest_axis` the one
+    that changes most rapidly in the flattened ordering.
+
+    Parameters
+    ----------
+    arr : array-like
+        The input N-dimensional array.
+    fastest_axis : int, default=0
+        The index (axis) which should vary the fastest in the flattened vector.
+
+    Returns
+    -------
+    flat : array-like (1D)
+        The flattened array in the specified order.
+    """
+    # Get the backend module
+    nx = get_backend_ext(arr)
+
+    # Number of dimensions
+    nd = arr.ndim
+
+    # Create a list of axes [0, 1, 2, ..., nd-1]
+    all_axes = list(range(nd))
+
+    # Swap the `fastest_axis` with the last axis
+    all_axes[fastest_axis], all_axes[-1] = all_axes[-1], all_axes[fastest_axis]
+
+    # Transpose arr so that `fastest_axis` is last
+    transposed = nx.transpose(arr, axes=all_axes)
+
+    # Now flatten in standard (row-major) order
+    flat = transposed.reshape(-1)
+
+    return flat
+
+
+def unflatten_array(vec, shape: tuple[int, ...], fastest_axis: int = 0):
+    """
+    Reshape the 1D array `vec` back to the original `shape` (N-dimensional),
+    such that the axis `fastest_axis` becomes the same fastest axis
+    used in flatten_array().
+
+    Parameters
+    ----------
+    vec : array-like (1D)
+        The flattened array.
+    shape : tuple of ints
+        The target shape of the N-dimensional array.
+    fastest_axis : int, default=0
+        The axis that was set to vary fastest in flatten_array().
+
+    Returns
+    -------
+    arr : array-like (N-dimensional)
+        The reshaped array matching `shape`.
+    """
+    nx = get_backend_ext(vec)
+    nd = len(shape)
+
+    # The same axis-reordering that we used in flatten_array
+    all_axes = list(range(nd))
+    all_axes[fastest_axis], all_axes[-1] = all_axes[-1], all_axes[fastest_axis]
+
+    # We'll reshape `vec` into the transposed shape
+    # (i.e., shape re-ordered so that fastest_axis is last).
+    transposed_shape = [shape[a] for a in all_axes]
+    temp = vec.reshape(transposed_shape)
+
+    # Now invert that transpose by applying the reverse permutation.
+    # If we originally did np.transpose(arr, axes=all_axes),
+    # we now do np.transpose(..., inv_perm) with inv_perm being
+    # the inverse of `all_axes`.
+    all_axes = list_to_array(all_axes, nx=nx)
+    inv_perm = nx.argsort(all_axes)  # which axes go back to their original position
+    arr = nx.transpose(temp, axes=tuple(inv_perm))
+
+    return arr
+
+
+def vectorize_VF(V, F):
+    """
+    Vectorize the V and F variables into a single 1D vector.
+
+    Parameters
+    ----------
+    V : Svar
+        The staggered variable V. The shape of each density is (N0, N1, ..., N_{N - 1}).
+    F : np.ndarray
+        N-dimensional array of shape (N_{N - 1}).
+
+    Returns
+    -------
+    vec : np.ndarray
+        A 1D vector of shape (2 * N0 * N1 * ... * N_{N - 1}).
+    """
+    # Get the backend module
+    nx = get_backend_ext(F)
+    res = []
+
+    for i in range(V.N):
+        res.append(flatten_array(V.D[i], fastest_axis=i))
+    res.append(flatten_array(V.Z, fastest_axis=V.N - 1))
+    res.append(F)
+
+    # Concatenate the two vectors
+    vec = nx.concatenate(res)
+    return vec
+
+
+def unvectorize_VF(vec, F_shape, cs, ll):
+    """
+    Unvectorize the V and F variables from a single 1D vector.
+
+    Parameters
+    ----------
+    vec : np.ndarray
+        A 1D vector of shape (2 * N0 * N1 * ... * N_{N - 1}).
+    F_shape : int
+        The shape of the F variable (N_{N - 1}).
+    cs : tuple of ints
+        The size of the centered grid.
+    ll : tuple of floats
+        The length scales of the domain.
+
+    Returns
+    -------
+    V : Svar
+        The staggered variable V.
+    F : np.ndarray
+        The N-dimensional array F.
+    """
+    # Get the backend module
+    nx = get_backend_ext(vec)
+
+    # Split the vector into V and F
+    D = [nx.zeros(cs, type_as=vec) for _ in range(len(cs))]
+    Z = nx.zeros(cs, type_as=vec)
+    V = grids.Cvar(cs, ll, D, Z)
+    F = vec[-F_shape:]  # noqa: E203
+    vec = vec[:-F_shape].reshape(-1, math.prod(cs))
+
+    for i in range(V.N):
+        V.D[i] = unflatten_array(vec[i], shape=cs, fastest_axis=i)
+    V.Z = unflatten_array(vec[V.N], shape=cs, fastest_axis=V.N - 1)
+
+    return V, F
+
+
+def build_H_operator_matrix(H, dx: float, fastest_axis: int = 0):
+    """
+    Construct the matrix M (size N0 x (N0*N1*...*N_{n-1})) that performs the operation:
+
+        (M * flatten(rho))[i0] = sum_{i1,...,i_{n-1}} [ rho[i0,i1,...] * H[i0,i1,...] ] * dx
+
+    This is consistent with the same flattening order used in flatten_array(..., fastest_axis).
+
+    Parameters
+    ----------
+    H : np.ndarray
+        N-dimensional array of shape (N0, N1, ..., N_{n-1}).
+    dx : float
+        Scalar factor that multiplies each H-element in the operator.
+    fastest_axis : int, default=1
+        The axis that is used as the fastest in flatten_array/unflatten_array.
+
+    Returns
+    -------
+    M : np.ndarray
+        A 2D matrix of shape (N0, N0*N1*...*N_{n-1}), representing the linear operator.
+    """
+    shape = H.shape
+    dims = len(shape)
+    n0 = shape[0]  # The "first" dimension
+    total_size = math.prod(shape)  # Number of elements total
+    nx = get_backend_ext(H)
+
+    # We'll build the matrix directly.
+    # M[row=i0, col] = H[i0, i1,...] * dx if that col corresponds to (i0,i1,...) in flattening order
+    M = nx.zeros((n0, total_size), type_as=H)
+
+    # We need to decode the multi-index from each column index
+    # "Inverse" of flatten_array logic.
+    nd = len(shape)
+    # We'll make a helper to do the multi-index decoding:
+
+    def index_to_multiidx(flat_idx: int) -> tuple:
+        """
+        Convert a single integer index `flat_idx` back into
+        an (i0, i1, ..., i_{n-1}) multi-index consistent
+        with flatten_array(..., fastest_axis).
+        """
+        # Step 1: figure out the permutation of axes
+        all_axes = list(range(nd))
+        all_axes[fastest_axis], all_axes[-1] = all_axes[-1], all_axes[fastest_axis]
+
+        # Step 2: decode as if shape is reordered by `all_axes`
+        reordered_shape = [shape[a] for a in all_axes]
+
+        # We'll decode in standard row-major for that reordered shape.
+        # i.e. if we label them as [r0, r1, ..., r_{n-1}] = reordered_shape,
+        # then r_{n-1} is the fastest varying in normal flattening.
+        # We'll accumulate each coordinate in that order, then invert.
+        coords_reordered = []
+        tmp = flat_idx
+        for dim_size in reversed(reordered_shape):
+            coord = tmp % dim_size
+            tmp //= dim_size
+            coords_reordered.append(coord)
+        coords_reordered.reverse()  # because we took them from last to first
+
+        # coords_reordered now corresponds to axes in `all_axes` order.
+        # We must invert that permutation to recover the (i0, i1, ..., i_{n-1}) standard indexing.
+        # That is, if all_axes = [A0, A1, ..., A_{n-1}],
+        # then coords_reordered[j] = i_{A_j}.
+        # We want i_j = coords_reordered[index_of_j_in_all_axes].
+        full_coords = [None] * nd
+        for axis_idx, axis_number in enumerate(all_axes):
+            full_coords[axis_number] = coords_reordered[axis_idx]
+
+        return tuple(full_coords)
+
+    # Now fill the matrix:
+    for col in range(total_size):
+        # decode multi-index
+        multi_idx = index_to_multiidx(col)
+        i0 = multi_idx[0]
+
+        # place H[i0,i1,...] * dx at M[i0, col]
+        M[i0, col] = H[multi_idx] * dx
+
+    # Concatenate zero blocks
+    M = nx.concatenate([M] + ([nx.zeros((n0, total_size))] * dims), axis=1)
+
+    return nx.tocsr(M)  # This returns dense matrix for torch backend
+
+
+def I_of_N(N):
+    """
+    Construct the matrix I(N) of shape (N, N+1) where each row has two 0.5 entries:
+      Row k has [0, ..., 0, 0.5, 0.5, 0, ..., 0]
+                        ^      ^
+                        k      k+1
+    """
+    M = np.zeros((N, N + 1))
+    for k in range(N):
+        M[k, k] = 0.5
+        M[k, k + 1] = 0.5
+    return M
+
+
+def build_big_block(N_list: list, nx: Backend):
+    """
+    1) Given N_list = [N0, ..., N_N], build [I(N_0), ..., I(N_N)].
+    2) For each j, build Q[j] = I(N_j) @ I(N_j).T + Identity(N_j).
+    3) Form a block-diagonal matrix of the Q[j] blocks, where Q[j] is repeated
+       (prod_over_i(N_i) / N_j) times.
+    4) Add 2 * Identity(N_N) to the last block.
+    """
+    # Step 1 & 2: build each Q_j
+    Q_list = []
+    for N_j in N_list:
+        I_Nj = I_of_N(N_j)
+        Q_j = I_Nj @ I_Nj.T + np.eye(N_j)  # N_j x N_j
+        Q_list.append(sps.csr_matrix(Q_j))
+
+    # Compute the product of all N_j
+    prod = math.prod(N_list)
+
+    # Add 2 * the identity matrix for the source term
+    Q_list.append(sps.csr_matrix(2 * np.eye(N_list[-1])))
+    N_list.append(N_list[-1])
+
+    # Step 3: repeat each Q_j the correct number of times and build block diagonal
+    blocks = []
+    for N_j, Q_j in zip(N_list, Q_list):
+        repeats = prod // N_j  # integer division
+        blocks.extend([Q_j] * repeats)
+
+    # Build the final block-diagonal matrix
+    big_block = sps.block_diag(blocks, format="csr")
+    N_list.pop()  # Remove the last element (the source term)
+    return nx.tocsr(nx.from_numpy(big_block))
+
+
+def precomputePPT(H, cs, ll):
+    nx = get_backend_ext(H)
+    H_numpy = nx.to_numpy(H)
+    numpy_back = NumpyBackend_ext()
+    II_block = build_big_block(cs, numpy_back)
+    H_op = build_H_operator_matrix(
+        H_numpy, math.prod(ll[1:]) / math.prod(cs[1:]), fastest_axis=0
+    )
+    # Check shapes before constructing the block
+    rows_II, cols_II = II_block.shape
+    rows_H, cols_H = H_op.shape
+    rows_HT, cols_HT = H_op.T.shape
+    H_opH_opT = H_op @ H_op.T
+    rows_HopHopT, cols_HopHopT = H_opH_opT.shape
+    # For np.block([[A, B],[C, D]]), we need:
+    # 1) A.shape[0] == B.shape[0]  (top row blocks must align in rows)
+    # 2) C.shape[0] == D.shape[0]  (bottom row blocks must align in rows)
+    # 3) A.shape[1] == C.shape[1]  (left column blocks must align in columns)
+    # 4) B.shape[1] == D.shape[1]  (right column blocks must align in columns)
+    assert rows_II == rows_HT, "Top row blocks do not align in rows."
+    assert rows_H == rows_HopHopT, "Bottom row blocks do not align in rows."
+    assert cols_II == cols_H, "Left column blocks do not align in columns."
+    assert cols_HT == cols_HopHopT, "Right column blocks do not align in columns."
+
+    PPT = sps.block_array([[II_block, -H_op.T], [-H_op, H_opH_opT]], format="csr")
+    return nx.tocsr(nx.from_numpy(PPT))
+
+
+def projinterp_constraint_big_matrix(
+    dest: grids.CSvar, x: grids.CSvar, solve: callable, H, F, log=None
+):
+    """Calculate the projection of the interpolation and the constraint operator by constructing a big matrix.
+
+    Given the input x=(U,V), calculate the projection of interpolation and constraint
+    operator. We consider the matrix
+    P = (I, -Id)
+        (0,  H)
+    where I is the interpolation operator, Id is the identity for the centered variable and H is the H function for the constraint. By noting that the interpolation & the constraint operator can be
+    written as the affine equation
+    P(U, V) = (O, F) (O is the zero variable and F is the right-hand side of the constraint),
+    we calculate the projection dest = (U', V') by the projection formula:
+    (U', V') = (U, V) + P^T (P P^T)^{-1} ((O, F) - P(U, V))
+        
+    Args:
+        dest (CSvar): The destination variable.
+        x (CSvar): The input variable.
+        P (array): The matrix P.
+        PPT (callable): The "solve" function for the matrix PPT.
+        H (array): The H function for the constraint.
+        F (array of shape (cs[0],)): The right-hand side of the constraint.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
+    """
+    if log is None:
+        log = {
+            "pre_lambda": [],
+            "lambda": [],
+            "first_order_condition": [],
+            "U_prime_interp": [],
+            "HQHlambda": [],
+            "lambda_eqn": [],
+        }
+    nx = x.nx
+    if not isinstance(nx, NumpyBackend_ext):
+        raise ValueError("The backend must be numpy. {} is not supported.".format(nx))
+    # Calculate (O, F) - P(U, V) = (V - I(U), F - HV)
+    V_minus_IU = x.V - grids.interp(x.U)
+    F_minus_HV = F - nx.sum(x.V.D[0] * H, axis=tuple(range(1, H.ndim))) * math.prod(
+        x.ll[1:]
+    ) / math.prod(x.cs[1:])
+
+    # Solve the linear system to calculate (P P^T)^{-1} ((O, F) - P(U, V))
+    vec = vectorize_VF(V_minus_IU, F_minus_HV)
+    vec = solve(vec)
+    new_V, new_F = unvectorize_VF(vec, F.shape[0], x.cs, x.ll)
+
+    # Calculate (U', V') =  P^T(new_V, new_F) = (I* new_V, - new_V + H^*new_F )
+    dest.U = grids.interpT(new_V)
+    Hstar_new_F = (
+        H
+        * new_F[(slice(None),) + (None,) * (H.ndim - 1)]
+        * (math.prod(x.ll[1:]) / math.prod(x.cs[1:]))
+    )
+    dest.V = (-1.0) * new_V
+    dest.V.D[0] += Hstar_new_F
+
+    # Calculate (U', V') = (U, V) + P^T (P P^T)^{-1} ((O, F) - P(U, V))
+    dest.U += x.U
+    dest.V += x.V
+
+
 def stepDR(
     w: grids.CSvar, x: grids.CSvar, y: grids.CSvar, z: grids.CSvar, prox1, prox2, alpha
 ):
@@ -534,7 +917,8 @@ def computeGeodesic(
     q=2.0,
     delta=1.0,
     niter=1000,
-    dykstra=True,
+    dykstra=False,
+    big_matrix=False,
     eps=10e-3,
     niter_dykstra=500,
     alpha=None,
@@ -599,11 +983,24 @@ def computeGeodesic(
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(
-        y, x, Q, HQH=None, H=None, F=None, dykstra=False, eps=10e-3, niter_dykstra=1000
+        y,
+        x,
+        Q,
+        solve=None,
+        HQH=None,
+        H=None,
+        F=None,
+        dykstra=False,
+        big_matrix=False,
+        eps=10e-3,
+        niter_dykstra=1000,
     ):
         if HQH is None or H is None or F is None:
             projinterp_(y, x, Q, log)
         else:
+            if big_matrix:
+                projinterp_constraint_big_matrix(y, x, solve, H, F, log)
+                return
             if dykstra:
                 projinterp_constraint_dykstra(
                     y, x, Q, HQH, H, F, eps=10e-3, maxiter=niter_dykstra, log=log
@@ -647,6 +1044,8 @@ def computeGeodesic(
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, rho0, rho1)
     HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
+    PPT = precomputePPT(H, list(x.cs), x.ll) if H is not None else None
+    solve = spsla.factorized(PPT) if PPT is not None else None
 
     Flist, Clist, Ilist = (
         nx.zeros(niter, type_as=rho0),
@@ -656,6 +1055,7 @@ def computeGeodesic(
     HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
 
     for i in range(niter):
+        # print("Iteration:", i)
         if i % (niter // 100) == 0:
             if verbose:
                 print(f"\rProgress: {i // (niter // 100)}%", end="")
@@ -666,7 +1066,9 @@ def computeGeodesic(
             y,
             z,
             lambda y, x: prox1(y, x, source, gamma, p, q),
-            lambda y, x: prox2(y, x, Q, HQH, H, F, dykstra, eps, niter_dykstra),
+            lambda y, x: prox2(
+                y, x, Q, solve, HQH, H, F, dykstra, big_matrix, eps, niter_dykstra
+            ),
             alpha,
         )
 

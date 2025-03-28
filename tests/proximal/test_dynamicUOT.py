@@ -2,7 +2,9 @@ import proximal.backend_extension as be
 import proximal.dynamicUOT as dyn
 import proximal.grids as gr
 import numpy as np
+import scipy as sp
 import torch
+import pytest
 
 
 class TestRoot:
@@ -544,6 +546,1050 @@ class TestprecomputeHQH:
         )
 
 
+class TestFlattenArray:
+    def test_flatten_array_2D_numpy_small(self):
+        a = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        np.testing.assert_allclose(b, np.array([1, 3, 2, 4]).astype(np.float32))
+
+    def test_flatten_array_2D_torch_small(self):
+        a = torch.tensor([[1, 2], [3, 4]]).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        torch.testing.assert_close(b, torch.tensor([1, 3, 2, 4]).float())
+
+    def test_flatten_array_2D_numpy_small_axis1(self):
+        a = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        np.testing.assert_allclose(b, np.array([1, 2, 3, 4]).astype(np.float32))
+
+    def test_flatten_array_2D_torch_small_axis1(self):
+        a = torch.tensor([[1, 2], [3, 4]]).float()
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        torch.testing.assert_close(b, torch.tensor([1, 2, 3, 4]).float())
+
+    def test_flatten_array_3D_numpy_small(self):
+        a = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        np.testing.assert_allclose(
+            b, np.array([1, 5, 3, 7, 2, 6, 4, 8]).astype(np.float32)
+        )
+
+    def test_flatten_array_3D_torch_small(self):
+        a = torch.tensor([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        torch.testing.assert_close(b, torch.tensor([1, 5, 3, 7, 2, 6, 4, 8]).float())
+
+
+class TestUnflattenArray:
+    def test_unflatten_array_2D_numpy_small(self):
+        a = np.array([1, 3, 2, 4]).astype(np.float32)
+        shape = (2, 2)
+        fastest_axis = 0
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        np.testing.assert_allclose(b, np.array([[1, 2], [3, 4]]).astype(np.float32))
+
+    def test_unflatten_array_2D_torch_small(self):
+        a = torch.tensor([1, 3, 2, 4]).float()
+        shape = (2, 2)
+        fastest_axis = 0
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        torch.testing.assert_close(b, torch.tensor([[1, 2], [3, 4]]).float())
+
+    def test_unflatten_array_2D_numpy_small_axis1(self):
+        a = np.array([1, 2, 3, 4]).astype(np.float32)
+        shape = (2, 2)
+        fastest_axis = 1
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        np.testing.assert_allclose(b, np.array([[1, 2], [3, 4]]).astype(np.float32))
+
+    def test_unflatten_array_2D_torch_small_axis1(self):
+        a = torch.tensor([1, 2, 3, 4]).float()
+        shape = (2, 2)
+        fastest_axis = 1
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        torch.testing.assert_close(b, torch.tensor([[1, 2], [3, 4]]).float())
+
+    def test_unflatten_array_3D_numpy_small(self):
+        a = np.array([1, 5, 3, 7, 2, 6, 4, 8]).astype(np.float32)
+        shape = (2, 2, 2)
+        fastest_axis = 0
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        np.testing.assert_allclose(
+            b, np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]).astype(np.float32)
+        )
+
+    def test_unflatten_array_3D_torch_small(self):
+        a = torch.tensor([1, 5, 3, 7, 2, 6, 4, 8]).float()
+        shape = (2, 2, 2)
+        fastest_axis = 0
+        b = dyn.unflatten_array(a, shape, fastest_axis)
+        torch.testing.assert_close(
+            b, torch.tensor([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]).float()
+        )
+
+
+class TestFlattenUnflatten:
+    def test_flatten_unflatten_2D_numpy_random(self):
+        a = np.random.rand(3, 4).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        np.testing.assert_allclose(a, c)
+
+    def test_flatten_unflatten_2D_torch_random(self):
+        a = torch.rand(3, 4).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        torch.testing.assert_close(a, c)
+
+    def test_flatten_unflatten_3D_numpy_random(self):
+        a = np.random.rand(3, 4, 5).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        np.testing.assert_allclose(a, c)
+
+    def test_flatten_unflatten_3D_torch_random(self):
+        a = torch.rand(3, 4, 5).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        torch.testing.assert_close(a, c)
+
+    def test_flatten_unflatten_2D_numpy_random_axis1(self):
+        a = np.random.rand(3, 4).astype(np.float32)
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        np.testing.assert_allclose(a, c)
+
+    def test_flatten_unflatten_2D_torch_random_axis1(self):
+        a = torch.rand(3, 4).float()
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        torch.testing.assert_close(a, c)
+
+    def test_flatten_unflatten_3D_numpy_random_axis1(self):
+        a = np.random.rand(3, 4, 5).astype(np.float32)
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        np.testing.assert_allclose(a, c)
+
+    def test_flatten_unflatten_3D_torch_random_axis1(self):
+        a = torch.rand(3, 4, 5).float()
+        fastest_axis = 1
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        torch.testing.assert_close(a, c)
+
+    def test_flatten_unflatten_3D_numpy_random_axis2(self):
+        a = np.random.rand(3, 4, 5).astype(np.float32)
+        fastest_axis = 2
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        np.testing.assert_allclose(a, c)
+
+    def test_flatten_unflatten_3D_torch_random_axis2(self):
+        a = torch.rand(3, 4, 5).float()
+        fastest_axis = 2
+        b = dyn.flatten_array(a, fastest_axis)
+        c = dyn.unflatten_array(b, a.shape, fastest_axis)
+        torch.testing.assert_close(a, c)
+
+
+class TestVectorizeVF:
+    def test_vectorize_VF_numpy_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(2)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        V.D[1] = np.array([[7, 8], [9, 10], [11, 12]]).astype(np.float32)
+        V.Z = np.array([[13, 14], [15, 16], [17, 18]]).astype(np.float32)
+        F = np.array([19, 20, 21, 22]).astype(np.float32)
+        result = dyn.vectorize_VF(V, F)
+        expected = np.array(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).astype(np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_vectorize_VF_torch_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(2)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor([[1, 2], [3, 4], [5, 6]]).float()
+        V.D[1] = torch.tensor([[7, 8], [9, 10], [11, 12]]).float()
+        V.Z = torch.tensor([[13, 14], [15, 16], [17, 18]]).float()
+        F = torch.tensor([19, 20, 21, 22]).float()
+        result = dyn.vectorize_VF(V, F)
+        expected = torch.tensor(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).float()
+        torch.testing.assert_close(result, expected)
+
+    def test_vectorize_VF_numpy_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(3)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).astype(np.float32)
+        V.D[1] = np.array(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).astype(np.float32)
+        V.Z = np.array(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).astype(np.float32)
+        F = np.array([37, 38, 39, 40]).astype(np.float32)
+        result = dyn.vectorize_VF(V, F)
+        expected = np.array(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+            ]
+        ).astype(np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_vectorize_VF_torch_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(3)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).float()
+        V.D[1] = torch.tensor(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).float()
+        V.Z = torch.tensor(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).float()
+        F = torch.tensor([37, 38, 39, 40]).float()
+        result = dyn.vectorize_VF(V, F)
+        expected = torch.tensor(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+            ]
+        ).float()
+        torch.testing.assert_close(result, expected)
+
+
+class TestUnvectorizeVF:
+    def test_unvectorize_VF_numpy_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(2)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        V.D[1] = np.array([[7, 8], [9, 10], [11, 12]]).astype(np.float32)
+        V.Z = np.array([[13, 14], [15, 16], [17, 18]]).astype(np.float32)
+        F = np.array([19, 20, 21, 22]).astype(np.float32)
+
+        vec = np.array(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).astype(np.float32)
+        V_res, F_res = dyn.unvectorize_VF(vec, 4, cs, ll)
+        np.testing.assert_allclose(V_res.D[0], V.D[0])
+        np.testing.assert_allclose(V_res.D[1], V.D[1])
+        np.testing.assert_allclose(V_res.Z, V.Z)
+        np.testing.assert_allclose(F_res, F)
+
+    def test_unvectorize_VF_torch_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(2)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor([[1, 2], [3, 4], [5, 6]]).float()
+        V.D[1] = torch.tensor([[7, 8], [9, 10], [11, 12]]).float()
+        V.Z = torch.tensor([[13, 14], [15, 16], [17, 18]]).float()
+        F = torch.tensor([19, 20, 21, 22]).float()
+        vec = torch.tensor(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).float()
+        V_res, F_res = dyn.unvectorize_VF(vec, 4, cs, ll)
+        torch.testing.assert_close(V_res.D[0], V.D[0])
+        torch.testing.assert_close(V_res.D[1], V.D[1])
+        torch.testing.assert_close(V_res.Z, V.Z)
+        torch.testing.assert_close(F_res, F)
+
+    def test_unvectorize_VF_numpy_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(3)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).astype(np.float32)
+        V.D[1] = np.array(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).astype(np.float32)
+        V.Z = np.array(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).astype(np.float32)
+        F = np.array([37, 38, 39, 40]).astype(np.float32)
+        vec = np.array(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+            ]
+        ).astype(np.float32)
+        V_res, F_res = dyn.unvectorize_VF(vec, 4, cs, ll)
+        np.testing.assert_allclose(V_res.D[0], V.D[0])
+        np.testing.assert_allclose(V_res.D[1], V.D[1])
+        np.testing.assert_allclose(V_res.D[2], V.D[2])
+        np.testing.assert_allclose(V_res.Z, V.Z)
+        np.testing.assert_allclose(F_res, F)
+
+    def test_unvectorize_VF_torch_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(3)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).float()
+        V.D[1] = torch.tensor(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).float()
+        V.Z = torch.tensor(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).float()
+        F = torch.tensor([37, 38, 39, 40]).float()
+        vec = torch.tensor(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+            ]
+        ).float()
+        V_res, F_res = dyn.unvectorize_VF(vec, 4, cs, ll)
+        torch.testing.assert_close(V_res.D[0], V.D[0])
+        torch.testing.assert_close(V_res.D[1], V.D[1])
+        torch.testing.assert_close(V_res.D[2], V.D[2])
+        torch.testing.assert_close(V_res.Z, V.Z)
+        torch.testing.assert_close(F_res, F)
+
+
+class TestBuildHOperatorMatrix:
+    def test_build_H_operator_matrix_numpy_2D(self):
+        H = np.array([[1, 2], [3, 4]])
+        dx = 1
+        res = dyn.build_H_operator_matrix(H, dx).todense()
+        np.testing.assert_allclose(
+            res,
+            np.array(
+                [
+                    [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+                ]
+            ),
+        )
+
+    def test_build_H_operator_matrix_torch_2D(self):
+        H = torch.tensor([[1, 2], [3, 4]])
+        dx = 1
+        res = dyn.build_H_operator_matrix(torch.tensor(H).float(), dx)
+        torch.testing.assert_close(
+            res,
+            torch.tensor(
+                [
+                    [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+                ]
+            ).float(),
+            check_dtype=False,
+        )
+
+    def test_build_H_operator_matrix_numpy_3D(self):
+        H = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        dx = 1
+        res = dyn.build_H_operator_matrix(H, dx).todense()
+        np.testing.assert_allclose(
+            res,
+            np.array(
+                [
+                    [
+                        1,
+                        0,
+                        3,
+                        0,
+                        2,
+                        0,
+                        4,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    [
+                        0,
+                        5,
+                        0,
+                        7,
+                        0,
+                        6,
+                        0,
+                        8,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                ]
+            ),
+        )
+
+    def test_build_H_operator_matrix_torch_3D(self):
+        H = torch.tensor([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        dx = 1
+        res = dyn.build_H_operator_matrix(H, dx)
+        torch.testing.assert_close(
+            res,
+            torch.tensor(
+                [
+                    [
+                        1,
+                        0,
+                        3,
+                        0,
+                        2,
+                        0,
+                        4,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    [
+                        0,
+                        5,
+                        0,
+                        7,
+                        0,
+                        6,
+                        0,
+                        8,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                ]
+            ),
+            check_dtype=False,
+        )
+
+
+class TestBuildHandFlattenArray:
+    def test_build_H_and_flatten_array_numpy_small_2D(self):
+        H = np.array([[1, 2], [3, 4]])
+        dx = 1
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = np.array([[5, 6], [7, 8]]).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = np.concatenate([b] + [np.zeros(4)] * 2)
+        c = H_mat @ b
+        np.testing.assert_allclose((H * a * dx).sum(axis=1), c)
+
+    def test_build_H_and_flatten_array_torch_small_2D(self):
+        H = torch.tensor([[1, 2], [3, 4]]).float()
+        dx = 1
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = torch.tensor([[5, 6], [7, 8]]).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = torch.cat([b, torch.zeros(4), torch.zeros(4)], dim=0)
+        c = H_mat @ b
+        torch.testing.assert_close((H * a * dx).sum(axis=1), c)
+
+    def test_build_H_and_flatten_array_numpy_small_3D(self):
+        H = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        dx = 1
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = np.array([[[5, 6], [7, 8]], [[9, 10], [11, 12]]]).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = np.concatenate([b] + [np.zeros(8)] * 3)
+        c = H_mat @ b
+        np.testing.assert_allclose((H * a * dx).sum(axis=(1, 2)), c)
+
+    def test_build_H_and_flatten_array_torch_small_3D(self):
+        H = torch.tensor([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]).float()
+        dx = 1
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = torch.tensor([[[5, 6], [7, 8]], [[9, 10], [11, 12]]]).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = torch.cat([b] + [torch.zeros(8)] * 3, dim=0)
+        c = H_mat @ b
+        torch.testing.assert_close((H * a * dx).sum(axis=(1, 2)), c)
+
+    def test_build_H_and_flatten_array_numpy_large_random(self):
+        H = np.random.rand(3, 4, 5, 6).astype(np.float32)
+        dx = 0.5
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = np.random.rand(3, 4, 5, 6).astype(np.float32)
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = np.concatenate([b] + [np.zeros(360)] * 4)
+        c = H_mat @ b
+        np.testing.assert_allclose((H * a * dx).sum(axis=(1, 2, 3)), c)
+
+    def test_build_H_and_flatten_array_torch_large_random(self):
+        H = torch.rand(3, 4, 5, 6).float()
+        dx = 0.5
+        H_mat = dyn.build_H_operator_matrix(H, dx)
+        a = torch.rand(3, 4, 5, 6).float()
+        fastest_axis = 0
+        b = dyn.flatten_array(a, fastest_axis)
+        b = torch.cat([b] + [torch.zeros(360)] * 4, dim=0)
+        c = H_mat @ b
+        torch.testing.assert_close((H * a * dx).sum(axis=(1, 2, 3)), c)
+
+
+class TestIofN:
+    def test_I_of_N_shape(self):
+        """Test that I_of_N(N) has the correct shape (N x (N+1))."""
+        for N in [1, 2, 3, 5]:
+            M = dyn.I_of_N(N)
+            assert M.shape == (
+                N,
+                N + 1,
+            ), f"Expected shape {(N, N+1)} for N={N}, but got {M.shape}"
+
+    def test_I_of_N_entries(self):
+        """
+        Test that each row k contains exactly two 0.5 entries,
+        at positions [k, k+1], and everything else is zero.
+        """
+        for N in [1, 2, 3]:
+            M = dyn.I_of_N(N)
+            for k in range(N):
+                # Create an array of zeros of length N+1, set positions k, k+1 to 0.5
+                expected_row = np.zeros(N + 1, dtype=float)
+                expected_row[k] = 0.5
+                expected_row[k + 1] = 0.5
+                np.testing.assert_array_almost_equal(
+                    M[k],
+                    expected_row,
+                    err_msg=f"Row {k} of I_of_N({N}) not as expected.",
+                )
+
+    def test_I_of_N_numerical_values(self):
+        """
+        Simple check on sum of all entries.
+        For N, the sum of all entries in I_of_N(N) should be N (since each row has two 0.5s).
+        """
+        for N in [1, 2, 5]:
+            M = dyn.I_of_N(N)
+            total_sum = np.sum(M)
+            expected_sum = N  # N rows * 0.5 + 0.5 = N
+            assert (
+                abs(total_sum - expected_sum) < 1e-12
+            ), f"Sum of entries in I_of_N({N}) should be {expected_sum}, got {total_sum}"
+
+
+class TestBuildBigBlock:
+    def test_build_big_block_single_dimension(self):
+        """
+        If N_list has a single element, say [2], then we only have Q[0] and 2 * the 2x2 identity,
+        repeated prod/N_0 = 2//2 = 1 time, so it's just two 2x2 blocks.
+        """
+        N_list = [2]
+        nx = be.NumpyBackend_ext()
+        result = dyn.build_big_block(N_list, nx).todense()
+        # result should be 2x2
+        assert result.shape == (
+            4,
+            4,
+        ), f"Expected a single 4x4 block, got {result.shape}"
+
+        # Let's compute what we expect: Q[0] = I_of_N(2)@I_of_N(2).T + I(2)
+        I2 = dyn.I_of_N(2)  # shape (2,3)
+        # I2@I2.T -> shape (2,2)
+        expected_Q0 = I2 @ I2.T + np.eye(2)
+        expected = sp.linalg.block_diag(expected_Q0, 2 * np.eye(2))  # shape 4x4
+        # assert False, f"{expected}"
+        # Compare with the result (it should match exactly, as only one block).
+        np.testing.assert_array_almost_equal(
+            result,
+            expected,
+            err_msg="Single block for build_big_block([2]) does not match expected Q.",
+        )
+
+    def test_build_big_block_two_dimensions(self):
+        """
+        N_list = [1, 2]
+        - product of [1,2] is 2.
+        - Q[0] with dimension 1x1 is repeated 2/1 = 2 times (block size 2 in the diagonal).
+        - Q[1] with dimension 2x2 is repeated 2/2 = 1 time (block size 2 in the diagonal).
+        - Finally, we have a N_list[-1] x N_list[-1] = 2x2 identity x 2 in the diagonal.
+        So final result is a 4-block diagonal with shape (1*2 + 2*1 + 2) = 6 x 6.
+        """
+        N_list = [1, 2]
+        nx = be.NumpyBackend_ext()
+
+        result = dyn.build_big_block(N_list, nx).todense()
+
+        # Expected shape is 4x4 (since Q[0] repeated 2 times -> 1+1=2 rows, Q[1] repeated once -> 2 rows, total=4)
+        # assert result.shape == (4, 4), f"Expected a 4x4 block, got {result.shape}"
+
+        # We know Q[0] is 1x1 => I_of_N(1) = [0.5, 0.5], so Q[0] = (I_of_N(1)@I_of_N(1).T) + I(1).
+        I1 = dyn.I_of_N(1)  # shape (1,2)
+        Q0 = I1 @ I1.T + np.eye(1)  # 1x1
+        # Q[1] is 2x2
+        I2 = dyn.I_of_N(2)
+        Q1 = I2 @ I2.T + np.eye(2)
+
+        # The block structure of 'result' should be diag(Q0, Q0, Q1).
+        # Let's build that structure manually and compare.
+        # We can do this with block_diag in Python:
+
+        expected = sp.linalg.block_diag(
+            Q0, Q0, Q1, 2 * np.eye(2)
+        )  # shape 1+1+2+2 = 6x6
+
+        np.testing.assert_array_almost_equal(
+            result,
+            expected,
+            err_msg="Block structure for build_big_block([1,2]) does not match expected diag(Q0,Q0,Q1).",
+        )
+
+    def test_build_big_block_larger_example(self):
+        """
+        A slightly larger example, just to test shape and basic numeric consistency.
+        We'll do N_list = [2, 3].
+        product = 6.
+        - Q[0] is 2x2 repeated 6/2=3 times -> 2+2+2 = 6 total rows from Q[0] blocks
+        - Q[1] is 3x3 repeated 6/3=2 times -> 3+3 = 6 total rows from Q[1] blocks
+        - Finally, we have a 3x3 identity x 2 in the diagonal -> 6 rows.
+        Overall shape = 18x18.
+        """
+        N_list = [2, 3]
+        nx = be.NumpyBackend_ext()
+        result = dyn.build_big_block(N_list, nx).todense()
+        assert result.shape == (18, 18), f"Expected a 12x12 block, got {result.shape}"
+
+        # We won't check all numeric entries here; we just trust the previous tests
+        # for correctness. But let's do a few quick checks on sums or diagonal positivity.
+        diag_elems = np.diag(result)
+        assert np.all(
+            diag_elems > 0
+        ), "All diagonal elements should be positive (due to identity + something)."
+
+    @pytest.mark.parametrize("N_list", [([1]), ([1, 1]), ([2, 2]), ([1, 2, 3])])
+    def test_build_big_block_general(self, N_list):
+        """
+        Parametric test: just ensure the final block matrix is square of
+        dimension sum_j ( (prod_i N_i / N_j) * N_j ) = ((len(N_list) + 1) * prod_i N_i).
+        """
+        from math import prod
+
+        nx = be.NumpyBackend_ext()
+
+        p = prod(N_list)
+        expected_dim = (len(N_list) + 1) * p
+        result = dyn.build_big_block(N_list, nx)
+        assert result.shape == (
+            expected_dim,
+            expected_dim,
+        ), f"For N_list={N_list}, expected block shape {expected_dim}x{expected_dim}, got {result.shape}"
+
+
 class TestStepDR:
     def test_step_DR_numpy_small(self):
         def prox1(y, x):
@@ -566,6 +1612,33 @@ class TestStepDR:
         np.testing.assert_allclose(
             y.U.D[0], np.array([[-2.0, -2.0], [-2.0, -2.0], [-2.0, -2.0]])
         )
+
+
+class TestPreComuputePPT:
+    def test_precomputePPT_numpy_small(self):
+        H = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        PPT = dyn.precomputePPT(H, list(cs), ll)
+        expected = np.array(
+            [
+                [1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -0.5, 0],
+                [0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1.5],
+                [0, 0, 1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0],
+                [0, 0, 0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2],
+                [0, 0, 0, 0, 1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 1.5, 0.25, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0.25, 1.5, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0],
+                [-0.5, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.25, 0],
+                [0, -1.5, 0, -2.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6.25],
+            ]
+        )
+        np.testing.assert_allclose(PPT.todense(), expected)
 
 
 class TestComputeGeodesic:
