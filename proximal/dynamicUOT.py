@@ -836,7 +836,7 @@ def projinterp_constraint_big_matrix(
     P(U, V) = (O, F) (O is the zero variable and F is the right-hand side of the constraint),
     we calculate the projection dest = (U', V') by the projection formula:
     (U', V') = (U, V) + P^T (P P^T)^{-1} ((O, F) - P(U, V))
-        
+
     Args:
         dest (CSvar): The destination variable.
         x (CSvar): The input variable.
