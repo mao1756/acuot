@@ -166,38 +166,19 @@ class Svar(Var):
     """
 
     def __init__(self, cs: tuple, ll: tuple, D: list, Z):
-        """
-         def __init__(self, rho0, rho1, T: int, ll: tuple):
-        N = len(rho0.shape) + 1
-        assert rho0.shape == rho1.shape
-        assert len(ll) == N
-        nx = get_backend_ext(rho0, rho1)
-        self.rho0 = nx.copy(rho0)
-        self.rho1 = nx.copy(rho1)
-
-        cs = (T,) + rho0.shape
-        ll = ll
-        shapes_staggered = [
-            tuple((numpy.array(cs) + numpy.eye(N, dtype=int)[k])) for k in range(N)
-        ]
-        D = [nx.zeros(shapes_staggered[k]) for k in range(N)]
-        D[0] = linear_interpolation(
-            rho0, rho1, T
-        )  # Initialize density by linear interpolation
-        Z = nx.zeros(cs)
-        """
         super().__init__(cs, ll, D, Z)
 
     def proj_BC(self, rho0, rho1):
         """Project the variable to satisfy the boundary conditions."""
         self.D[0][0] = rho0
         self.D[0][-1] = rho1
-        for k in range(1, self.N):
-            slices = [slice(None)] * self.N
-            slices[k] = 0
-            self.D[k][tuple(slices)] = 0  # Neumann BC
-            slices[k] = -1
-            self.D[k][tuple(slices)] = 0  # Neumann BC
+        if not self.periodic:
+            for k in range(1, self.N):
+                slices = [slice(None)] * self.N
+                slices[k] = 0
+                self.D[k][tuple(slices)] = 0  # Neumann BC
+                slices[k] = -1
+                self.D[k][tuple(slices)] = 0  # Neumann BC
 
     def remainder_CE(self):
         """Calculate div(D) - Z. If the continuity equation is satisfied, the result
@@ -242,6 +223,7 @@ class CSvar:
         init: str = None,
         U: Svar = None,
         V: Cvar = None,
+        periodic: bool = False,
     ):
         """Initialize the staggered and centered variables.
 
@@ -254,6 +236,7 @@ class CSvar:
             If 'manual', the variables are initialized by the user using the U and V arguments.
             U (Svar) : The staggered variable if init is 'manual'. Ignored if init is not 'manual'.
             V (Cvar) : The centered variable if init is 'manual'. Ignored if init is not 'manual'.
+            periodic (bool) : If True, the variable is periodic in the space dimensions.
         """
         self.N = len(rho0.shape) + 1
         self.nx = get_backend_ext(rho0, rho1)
@@ -261,40 +244,46 @@ class CSvar:
         self.ll = ll
         self.rho0 = self.nx.copy(rho0)
         self.rho1 = self.nx.copy(rho1)
+        self.periodic = periodic
         # Initialize U and V
 
-        if init is None or init == "fisher-rao" or init == "zero":
-            N = len(rho0.shape) + 1
-            cs = (T,) + rho0.shape
-            shapes_staggered = get_staggered_shape(cs)
-            D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
-            if init is None:
-                D[0] = linear_interpolation(rho0, rho1, T)
-                Z = self.nx.stack([rho1 - rho0] * cs[0], axis=0)
-            elif init == "fisher-rao":
-                D[0] = fisher_rao_geodesic(rho0, rho1, T)
-                Z = fisher_rao_source(rho0, rho1, T)
-            elif init == "zero":
-                Z = self.nx.zeros(cs, type_as=rho0)
-            self.U = Svar(cs, ll, D, Z)
-            self.V = interp(self.U)
-        elif init == "manual":
-            if U is None or V is None:
-                raise ValueError("U and V must be provided for manual initialization.")
-            self.U = Svar(
-                U.cs,
-                U.ll,
-                [self.nx.copy(U.D[k]) for k in range(U.N)],
-                self.nx.copy(U.Z),
-            )
-            self.V = Cvar(
-                self.cs,
-                ll,
-                V.D,
-                V.Z,
-            )
-        else:
-            raise ValueError("Invalid initialization method.")
+        match init:
+            case None | "fisher-rao" | "zero":
+                N = len(rho0.shape) + 1
+                cs = (T,) + rho0.shape
+                shapes_staggered = get_staggered_shape(cs, self.periodic)
+                D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
+                match init:
+                    case None:
+                        D[0] = linear_interpolation(rho0, rho1, T)
+                        Z = self.nx.stack([rho1 - rho0] * cs[0], axis=0)
+                    case "fisher-rao":
+                        D[0] = fisher_rao_geodesic(rho0, rho1, T)
+                        Z = fisher_rao_source(rho0, rho1, T)
+                    case "zero":
+                        Z = self.nx.zeros(cs, type_as=rho0)
+                self.U = Svar(cs, ll, D, Z)
+                self.V = interp(self.U)
+            case "manual":
+                if U is None or V is None:
+                    raise ValueError(
+                        "U and V must be provided for manual initialization."
+                    )
+
+                self.U = Svar(
+                    U.cs,
+                    U.ll,
+                    [self.nx.copy(U.D[k]) for k in range(U.N)],
+                    self.nx.copy(U.Z),
+                )
+                self.V = Cvar(
+                    self.cs,
+                    ll,
+                    V.D,
+                    V.Z,
+                )
+            case _:
+                raise ValueError("Invalid initialization method.")
 
     def interp_(self):
         """Interpolate U to V in-place."""
@@ -405,20 +394,24 @@ class CSvar:
         return math.sqrt(self.U.norm() ** 2 + self.V.norm() ** 2)
 
 
-def get_staggered_shape(cs: tuple):
+def get_staggered_shape(cs: tuple, periodic: bool = False):
     """Given the shape of a centered grid, return the shape of the staggered grids.
 
     Args:
         cs (tuple) : The shape of the centered grid.
+        periodic (bool) : If True, the variable is periodic in the space dimensions.
 
     Returns:
         list : The shape of the staggered grids.
 
     """
-    return [
-        tuple((numpy.array(cs) + numpy.eye(len(cs), dtype=int)[k]))
-        for k in range(len(cs))
-    ]
+    if periodic:
+        return [tuple([cs[0] + 1] + list(cs[1:]))] + [cs for _ in range(1, len(cs))]
+    else:
+        return [
+            tuple((numpy.array(cs) + numpy.eye(len(cs), dtype=int)[k]))
+            for k in range(len(cs))
+        ]
 
 
 def linear_interpolation(r0, r1, T: int):
@@ -466,30 +459,59 @@ def fisher_rao_source(r0, r1, T: int):
     return 2 * (nx.sqrt(r1) - nx.sqrt(r0)) * (t * nx.sqrt(r1) + (1 - t) * nx.sqrt(r0))
 
 
-def interp_(V: Cvar, U: Svar):  # in-place interpolation
-    for k in range(U.N):
-        slices = [slice(None)] * U.N
-        slices[k] = slice(0, U.cs[k])
-        V.D[k][...] = ((U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2)[tuple(slices)]
+def interp_(V: Cvar, U: Svar, periodic: bool = False):  # in-place interpolation
+    if periodic:
+        for k in range(U.N):
+            V.D[k][...] = (U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2
+    else:
+        for k in range(U.N):
+            slices = [slice(None)] * U.N
+            slices[k] = slice(0, U.cs[k])
+            V.D[k][...] = ((U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2)[tuple(slices)]
     V.Z[...] = U.Z
 
 
-def interpT_(U: Svar, V: Cvar):
-    """Apply the transpose of the interpolation operator in-place.
-    We apply the transpose of the interpolation operator to the variable V and store the
-    result in U.
+def interpT_(U: Svar, V: Cvar, periodic: bool = False):
     """
-    for k in range(V.N):
-        dk = list(V.cs)
-        dk[k] = 1
-        dk = tuple(dk)
-        slices = [slice(None)] * V.N
-        slices[k] = slice(0, V.cs[k] + 1)
-        cat = V.nx.concatenate(
-            [V.nx.zeros(dk, type_as=V.D[k]), V.D[k], V.nx.zeros(dk, type_as=V.D[k])],
-            axis=k,
-        )
-        U.D[k][...] = ((cat + V.nx.roll(cat, -1, axis=k)) / 2)[tuple(slices)]
+    In-place application of the transpose of the face-to-cell interpolation.
+
+    Parameters
+    ----------
+    U : Svar   # staggered (face-centred) field – destination
+    V : Cvar   # cell-centred field – source
+    periodic : bool
+        If True, treat every coordinate direction as periodic.
+        If False (default), fall back to the existing non-periodic logic.
+    """
+    if periodic:
+        # --- periodic adjoint:  U_i = 0.5*(V_i + V_{i-1}) ---
+        for k in range(V.N):
+            U.D[k][...] = 0.5 * (
+                V.D[k] + V.nx.roll(V.D[k], 1, axis=k)  # shift +1 wraps around
+            )
+    else:
+        # ---------- non-periodic branch (unchanged) ----------
+        for k in range(V.N):
+            dk = list(V.cs)  # shape of a single-cell pad along axis k
+            dk[k] = 1
+            dk = tuple(dk)
+
+            # pad V with a layer of zeros on each side, then do the same
+            # averaging trick as in the forward interpolation
+            slices = [slice(None)] * V.N
+            slices[k] = slice(0, V.cs[k] + 1)  # one cell larger than V along k
+
+            cat = V.nx.concatenate(
+                [
+                    V.nx.zeros(dk, type_as=V.D[k]),  # left pad
+                    V.D[k],  # interior
+                    V.nx.zeros(dk, type_as=V.D[k]),
+                ],  # right pad
+                axis=k,
+            )
+
+            U.D[k][...] = 0.5 * (cat + V.nx.roll(cat, -1, axis=k))[tuple(slices)]
+
     U.Z[...] = V.Z
 
 
@@ -504,16 +526,16 @@ def interp(U: Svar):
     return V
 
 
-def interpT(V: Cvar):
+def interpT(V: Cvar, periodic: bool = False):
     """Apply the transpose of the interpolation operator to the variable V."""
-    staggered_shape = get_staggered_shape(V.cs)
+    staggered_shape = get_staggered_shape(V.cs, periodic)
     U = Svar(
         V.cs,
         V.ll,
         [V.nx.zeros(staggered_shape[k], type_as=V.D[0]) for k in range(V.N)],
         V.nx.zeros(V.cs, type_as=V.D[0]),
     )
-    interpT_(U, V)
+    interpT_(U, V, periodic=periodic)
     return U
 
 
