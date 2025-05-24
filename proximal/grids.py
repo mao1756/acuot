@@ -459,59 +459,81 @@ def fisher_rao_source(r0, r1, T: int):
     return 2 * (nx.sqrt(r1) - nx.sqrt(r0)) * (t * nx.sqrt(r1) + (1 - t) * nx.sqrt(r0))
 
 
-def interp_(V: Cvar, U: Svar, periodic: bool = False):  # in-place interpolation
-    if periodic:
-        for k in range(U.N):
-            V.D[k][...] = (U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2
-    else:
-        for k in range(U.N):
-            slices = [slice(None)] * U.N
-            slices[k] = slice(0, U.cs[k])
-            V.D[k][...] = ((U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2)[tuple(slices)]
+def interp_(V: Cvar, U: Svar, periodic: bool = False):
+    """
+    Face-to-cell interpolation written in-place to V.
+
+    * axis 0 (time) is non-periodic.
+    * spatial axes are periodic only if `periodic=True`;
+      otherwise they follow the same non-periodic logic as time.
+    """
+    for k in range(U.N):
+
+        # ---- periodic spatial axis ---------------------------------
+        if k != 0 and periodic:
+            # shapes of U.D[k] and V.D[k] are identical
+            V.D[k][...] = 0.5 * (U.D[k] + U.nx.roll(U.D[k], -1, axis=k))
+            continue
+
+        # ---- non-periodic axis (time OR explicitly non-periodic) ----
+        # After averaging we keep only the first U.cs[k] cells.
+        slices = [slice(None)] * U.N
+        slices[k] = slice(0, U.cs[k])
+
+        V.D[k][...] = 0.5 * (U.D[k] + U.nx.roll(U.D[k], -1, axis=k))[tuple(slices)]
+
+    # propagate any per-cell metadata
     V.Z[...] = U.Z
 
 
 def interpT_(U: Svar, V: Cvar, periodic: bool = False):
     """
-    In-place application of the transpose of the face-to-cell interpolation.
+    Apply the transpose of the face-to-cell interpolation operator.
 
-    Parameters
-    ----------
-    U : Svar   # staggered (face-centred) field – destination
-    V : Cvar   # cell-centred field – source
-    periodic : bool
-        If True, treat every coordinate direction as periodic.
-        If False (default), fall back to the existing non-periodic logic.
+    Mixed boundary conditions:
+        * axis 0  (time)   : non-periodic  (open)
+        * axes 1…N-1 (space): periodic      if `periodic` is True
+                               otherwise fall back to non-periodic.
+    The result is written in-place to U.
     """
-    if periodic:
-        # --- periodic adjoint:  U_i = 0.5*(V_i + V_{i-1}) ---
-        for k in range(V.N):
+    for k in range(V.N):
+
+        # ---- periodic branch (ONLY for spatial axes) -----------------
+        if periodic and k != 0:
+            # ⟨U , V⟩ periodic adjoint:  U_i = 0.5*(V_i + V_{i-1})
             U.D[k][...] = 0.5 * (
-                V.D[k] + V.nx.roll(V.D[k], 1, axis=k)  # shift +1 wraps around
+                V.D[k] + V.nx.roll(V.D[k], 1, axis=k)  # wrap once upward
             )
-    else:
-        # ---------- non-periodic branch (unchanged) ----------
-        for k in range(V.N):
-            dk = list(V.cs)  # shape of a single-cell pad along axis k
-            dk[k] = 1
-            dk = tuple(dk)
+            continue
 
-            # pad V with a layer of zeros on each side, then do the same
-            # averaging trick as in the forward interpolation
-            slices = [slice(None)] * V.N
-            slices[k] = slice(0, V.cs[k] + 1)  # one cell larger than V along k
+        # ---- non-periodic branch (time axis OR global non-periodic) ---
+        # pad V with a single layer of zeros on each side of axis k
+        dk = list(V.cs)
+        dk[k] = 1
+        dk = tuple(dk)
 
-            cat = V.nx.concatenate(
-                [
-                    V.nx.zeros(dk, type_as=V.D[k]),  # left pad
-                    V.D[k],  # interior
-                    V.nx.zeros(dk, type_as=V.D[k]),
-                ],  # right pad
-                axis=k,
-            )
+        # build  [0-pad | interior | 0-pad]
+        cat = V.nx.concatenate(
+            [
+                V.nx.zeros(dk, type_as=V.D[k]),  # left pad
+                V.D[k],  # interior
+                V.nx.zeros(dk, type_as=V.D[k]),
+            ],  # right pad
+            axis=k,
+        )
 
-            U.D[k][...] = 0.5 * (cat + V.nx.roll(cat, -1, axis=k))[tuple(slices)]
+        # slice back to the staggered shape (one extra index on axis k)
+        slices = [slice(None)] * V.N
+        slices[k] = slice(0, V.cs[k] + 1)
 
+        U.D[k][...] = (
+            0.5
+            * (cat + V.nx.roll(cat, -1, axis=k))[  # V_j + V_{j-1}, with V_-1 = 0
+                tuple(slices)
+            ]
+        )
+
+    # copy any per-cell auxiliary field
     U.Z[...] = V.Z
 
 

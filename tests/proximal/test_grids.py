@@ -721,7 +721,7 @@ class TestFunctions:
 
         D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
 
-        torch.testing.assert_allclose(x.U.D[0], D0)
+        torch.testing.assert_close(x.U.D[0], D0)
         x.V.D[0] = torch.tensor(
             [
                 [2.0, 3.0],
@@ -740,7 +740,7 @@ class TestFunctions:
         assert x.U.D[0].shape == (3, 2)
         assert x.U.D[1].shape == (2, 3)
         assert x.U.Z.shape == cs
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             x.U.D[0],
             torch.tensor(
                 [
@@ -750,12 +750,144 @@ class TestFunctions:
                 ]
             ),
         )
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             x.U.D[1],
             torch.tensor(
                 [
                     [0.5, 1.0, 0.5],
                     [1.5, 2.5, 1.0],
+                ]
+            ),
+        )
+
+    def test_get_staggered_shape_nonperiodic(self):
+        cs = (3, 2)
+        staggered_shape = g.get_staggered_shape(cs)
+        assert staggered_shape == [(4, 2), (3, 3)]
+
+    def test_get_staggered_shape_periodic(self):
+        cs = (3, 2)
+        staggered_shape = g.get_staggered_shape(cs, periodic=True)
+        assert staggered_shape == [(4, 2), (3, 2)]
+
+    def test_interp_periodic(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])  # shape (3, 2)
+        D1 = np.array([[4.0, 6.0], [7.0, 8.0]])  # shape (2, 2)
+        x = g.Svar(cs, ll, [D0, D1], np.ones(cs))
+        y = g.Cvar(cs, ll, [np.zeros(cs), np.zeros(cs)], np.zeros(cs))
+        g.interp_(y, x, periodic=True)
+        assert y.D[0].shape == (2, 2)
+        assert y.D[1].shape == (2, 2)
+        assert y.Z.shape == cs
+        np.testing.assert_allclose(
+            y.D[0],
+            np.array(
+                [
+                    [(1.0 + 3.0) / 2, (2.0 + 4.0) / 2],
+                    [(3.0 + 5.0) / 2, (4.0 + 6.0) / 2],
+                ]
+            ),
+        )
+        np.testing.assert_allclose(
+            y.D[1],
+            np.array(
+                [
+                    [(4.0 + 6.0) / 2, (6.0 + 4.0) / 2],
+                    [(7.0 + 8.0) / 2, (8.0 + 7.0) / 2],
+                ]
+            ),
+        )
+
+    def test_interp_periodic_torch(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        D1 = torch.tensor([[4.0, 6.0], [7.0, 8.0]])
+        x = g.Svar(cs, ll, [D0, D1], torch.ones(cs))
+        y = g.Cvar(cs, ll, [torch.zeros(cs), torch.zeros(cs)], torch.zeros(cs))
+        g.interp_(y, x, periodic=True)
+        assert y.D[0].shape == (2, 2)
+        assert y.D[1].shape == (2, 2)
+        assert y.Z.shape == cs
+        torch.testing.assert_close(
+            y.D[0],
+            torch.tensor(
+                [
+                    [(1.0 + 3.0) / 2, (2.0 + 4.0) / 2],
+                    [(3.0 + 5.0) / 2, (4.0 + 6.0) / 2],
+                ]
+            ),
+        )
+        torch.testing.assert_close(
+            y.D[1],
+            torch.tensor(
+                [
+                    [(4.0 + 6.0) / 2, (6.0 + 4.0) / 2],
+                    [(7.0 + 8.0) / 2, (8.0 + 7.0) / 2],
+                ]
+            ),
+        )
+
+    def test_interpT_periodic(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[4.0, 6.0], [7.0, 8.0]])
+        x = g.Cvar(cs, ll, [D0, D1], np.ones(cs))
+        y = g.Svar(cs, ll, [np.zeros((3, 2)), np.zeros(cs)], np.zeros(cs))
+        g.interpT_(y, x, periodic=True)
+        assert y.D[0].shape == (3, 2)
+        assert y.D[1].shape == (2, 2)
+        assert y.Z.shape == cs
+        np.testing.assert_allclose(
+            y.D[0],
+            np.array(
+                [
+                    [1.0 / 2.0, 2.0 / 2.0],
+                    [(1.0 + 3.0) / 2, (2.0 + 4.0) / 2],
+                    [3.0 / 2, 4.0 / 2],
+                ]
+            ),
+        )
+        np.testing.assert_allclose(
+            y.D[1],
+            np.array(
+                [
+                    [(4.0 + 6.0) / 2, (6.0 + 4.0) / 2],
+                    [(7.0 + 8.0) / 2, (8.0 + 7.0) / 2],
+                ]
+            ),
+        )
+
+    def test_interpT_periodic_torch(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        D1 = torch.tensor([[4.0, 6.0], [7.0, 8.0]])
+        x = g.Cvar(cs, ll, [D0, D1], torch.ones(cs))
+        y = g.Svar(cs, ll, [torch.zeros((3, 2)), torch.zeros(cs)], torch.zeros(cs))
+        g.interpT_(y, x, periodic=True)
+        assert y.D[0].shape == (3, 2)
+        assert y.D[1].shape == (2, 2)
+        assert y.Z.shape == cs
+        torch.testing.assert_close(
+            y.D[0],
+            torch.tensor(
+                [
+                    [1.0 / 2.0, 2.0 / 2.0],
+                    [(1.0 + 3.0) / 2, (2.0 + 4.0) / 2],
+                    [3.0 / 2, 4.0 / 2],
+                ]
+            ),
+        )
+        torch.testing.assert_close(
+            y.D[1],
+            torch.tensor(
+                [
+                    [(4.0 + 6.0) / 2, (6.0 + 4.0) / 2],
+                    [(7.0 + 8.0) / 2, (8.0 + 7.0) / 2],
                 ]
             ),
         )
