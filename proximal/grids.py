@@ -168,11 +168,11 @@ class Svar(Var):
     def __init__(self, cs: tuple, ll: tuple, D: list, Z):
         super().__init__(cs, ll, D, Z)
 
-    def proj_BC(self, rho0, rho1):
+    def proj_BC(self, rho0, rho1, periodic: bool = False):
         """Project the variable to satisfy the boundary conditions."""
         self.D[0][0] = rho0
         self.D[0][-1] = rho1
-        if not self.periodic:
+        if not periodic:
             for k in range(1, self.N):
                 slices = [slice(None)] * self.N
                 slices[k] = 0
@@ -180,18 +180,25 @@ class Svar(Var):
                 slices[k] = -1
                 self.D[k][tuple(slices)] = 0  # Neumann BC
 
-    def remainder_CE(self):
+    def remainder_CE(self, periodic: bool = False):
         """Calculate div(D) - Z. If the continuity equation is satisfied, the result
         should be zero."""
         v = -self.Z
         for k in range(len(self.D)):
-            v += self.nx.diff(self.D[k], axis=k) * self.cs[k] / self.ll[k]
+            if periodic and k != 0:
+                v += (
+                    (self.nx.roll(self.D[k], -1, axis=k) - self.D[k])
+                    * self.cs[k]
+                    / self.ll[k]
+                )
+            else:
+                v += self.nx.diff(self.D[k], axis=k) * self.cs[k] / self.ll[k]
         return v
 
-    def dist_from_CE(self):
+    def dist_from_CE(self, periodic: bool = False):
         """Calculate the L2 norm of div(D) - Z."""
         return (
-            self.nx.sum(self.remainder_CE() ** 2)
+            self.nx.sum(self.remainder_CE(periodic) ** 2)
             * math.prod(self.ll)
             / math.prod(self.cs)
         )
@@ -287,7 +294,7 @@ class CSvar:
 
     def interp_(self):
         """Interpolate U to V in-place."""
-        interp_(self.V, self.U)
+        interp_(self.V, self.U, periodic=self.periodic)
 
     def proj_positive(self):
         """Project the density to be positive."""
@@ -296,7 +303,7 @@ class CSvar:
 
     def dist_from_CE(self):
         """Calculate the L2 norm of div(D) - Z."""
-        return self.U.dist_from_CE()
+        return self.U.dist_from_CE(self.periodic)
 
     def dilate_grid(self, s: float):
         """Apply pushforward by T:(t,x) -> (t,sx) to the variable."""
@@ -315,14 +322,22 @@ class CSvar:
 
     def dist_from_constraint(self, H, F):
         """Calculate the L2 norm of |HU-F|."""
-        HU = (
-            self.nx.sum(self.V.D[0] * H, axis=tuple(range(1, self.U.N)))
-            * math.prod(self.ll[1:])
-            / math.prod(self.cs[1:])
+        if not isinstance(H, list):
+            H = [H]
+        if not isinstance(F, list):
+            F = [F]
+        HU = [
+            (
+                self.nx.sum(self.V.D[0] * H_i, axis=tuple(range(1, self.U.N)))
+                * math.prod(self.ll[1:])
+                / math.prod(self.cs[1:])
+            )
+            for H_i in H
+        ]
+        return sum(
+            self.nx.sum(self.nx.abs(HU_i - F_i)) * self.ll[0] / self.cs[0]
+            for HU_i, F_i in zip(HU, F)
         )
-        return (
-            self.nx.sum(self.nx.abs(HU - F)) * self.ll[0] / self.cs[0]
-        )  # self.U.ll[0]
 
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
@@ -537,14 +552,14 @@ def interpT_(U: Svar, V: Cvar, periodic: bool = False):
     U.Z[...] = V.Z
 
 
-def interp(U: Svar):
+def interp(U: Svar, periodic: bool = False):
     V = Cvar(
         U.cs,
         U.ll,
         [U.nx.zeros(U.cs, type_as=U.D[0]) for _ in range(U.N)],
         U.nx.zeros(U.cs, type_as=U.D[0]),
     )
-    interp_(V, U)
+    interp_(V, U, periodic=periodic)
     return V
 
 

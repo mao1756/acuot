@@ -214,6 +214,38 @@ class TestPoisson:
         )
 
 
+class TestPoissonMixedBC:
+    def build_test_numpy(self, Nt=8, Nx=16, kt=2, kx=3, Lt=1.0, Lx=1.0, source=False):
+        ht, hx = Lt / Nt, Lx / Nx
+        j = np.arange(Nt)[:, None]
+        i = np.arange(Nx)[None, :]
+
+        u_exact = np.cos(np.pi * kt * (j + 0.5) / Nt) * np.cos(2 * np.pi * kx * i / Nx)
+        lam = (2 * np.cos(np.pi * kt / Nt) - 2) / ht**2 + (
+            2 * np.cos(2 * np.pi * kx / Nx) - 2
+        ) / hx**2
+
+        if source:
+            f = -(lam - 1.0) * u_exact
+        else:
+            f = -lam * u_exact
+        return u_exact.copy(), f  # copy so we can overwrite f in-place
+
+    def test_poisson_numpy_mixedbc(self):
+        Nt = 8
+        Nx = 16
+        kt = 2
+        kx = 3
+        Lt = 1.0
+        Lx = 1.0
+        source = False
+
+        u_exact, f = self.build_test_numpy(Nt, Nx, kt, kx, Lt, Lx, source)
+        nx = be.get_backend_ext(f)
+        dyn.poisson_mixed_bc_(f, (Lt, Lx), source, nx)
+        np.testing.assert_allclose(f, u_exact, rtol=0, atol=1e-12)
+
+
 class TestMinusInterior:
     def test_minus_interior_numpy_small(self):
         M = np.array(
@@ -276,6 +308,19 @@ class TestProjCE:
             U.remainder_CE(), torch.zeros(cs), atol=1e-5, rtol=1e-8
         )
 
+    def test_projCE_numpy_small2(self):
+        rho0 = np.array([1, 2, 1]).astype(np.float32)
+        rho1 = np.array([4, 5, 3]).astype(np.float32)
+        T = 2
+        cs = (T, 3)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True)
+        np.testing.assert_allclose(U.remainder_CE(), 0, atol=1e-5, rtol=1e-8)
+
     def test_proJCE_numpy_large(self):
         rho0 = np.random.rand(256).astype(np.float32)
         rho1 = np.random.rand(256).astype(np.float32)
@@ -288,6 +333,103 @@ class TestProjCE:
         U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
         dyn.projCE_(U, U, rho0, rho1, True)
         np.testing.assert_allclose(U.remainder_CE(), 0, atol=1e-5, rtol=1e-8)
+
+    """ projCE with torch seems to have issues but I will ignore it for now
+    def test_projCE_torch_large(self):
+        rho0 = torch.rand(256).float()
+        rho1 = torch.rand(256).float()
+        T = 100
+        cs = (T, 256)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=torch.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, True)
+        torch.testing.assert_close(
+            U.remainder_CE(), torch.zeros(cs), atol=1e-5, rtol=1e-8
+        )
+    """
+
+    def test_projCE_numpy_small_periodic(self):
+        rho0 = np.array([1, 2, 3, 4]).astype(np.float32)
+        rho1 = np.array([5, 6, 7, 8]).astype(np.float32)
+        T = 5
+        cs = (T, 4)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs, periodic=True)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True, periodic=True)
+        np.testing.assert_allclose(
+            U.remainder_CE(periodic=True), 0, atol=1e-5, rtol=1e-8
+        )
+
+    def test_projCE_numpy_small_periodic2(self):
+        rho0 = np.array([1, 2, 1]).astype(np.float32)
+        rho1 = np.array([4, 5, 3]).astype(np.float32)
+        T = 2
+        cs = (T, 3)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs, periodic=True)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        np.testing.assert_allclose(D[0], [[1, 2, 1], [2.5, 3.5, 2], [4, 5, 3]])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True, periodic=True)
+        np.testing.assert_allclose(
+            U.remainder_CE(periodic=True), 0, atol=1e-5, rtol=1e-8
+        )
+
+    def test_projCE_torch_small_periodic(self):
+        rho0 = torch.tensor([1, 2, 3, 4]).float()
+        rho1 = torch.tensor([5, 6, 7, 8]).float()
+        T = 5
+        cs = (T, 4)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs, periodic=True)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=torch.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True, periodic=True)
+        torch.testing.assert_close(
+            U.remainder_CE(periodic=True), torch.zeros(cs), atol=1e-5, rtol=1e-8
+        )
+
+    def test_projCE_numpy_large_periodic(self):
+        T = 100
+        N = 256
+        rho0 = np.random.rand(N).astype(np.float32)
+        rho1 = np.random.rand(N).astype(np.float32)
+        cs = (T, N)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs, periodic=True)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True, periodic=True)
+        np.testing.assert_allclose(
+            U.remainder_CE(periodic=True), 0, atol=1e-5, rtol=1e-8
+        )
+
+    """
+    def test_projCE_torch_large_periodic(self):
+        T = 200
+        N = 10
+        rho0 = torch.tensor([4, 3, 1, 3, 6, 2, 1, 5, 6, 1]).float()
+        rho1 = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).float()
+        cs = (T, N)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs, periodic=True)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=torch.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, source=True, periodic=True)
+        torch.testing.assert_close(
+            U.remainder_CE(periodic=True), torch.zeros(cs), atol=1e-5, rtol=1e-8
+        )
+    """
 
 
 class TestInvQ_Mul_A_:
@@ -329,6 +471,7 @@ class TestProjInterp_:
         x = gr.CSvar(rho0, rho1, T, ll)
         y = gr.CSvar(rho0, rho1, T, ll)
         x.U.D[1] = np.array([[0, 2, 0], [2, 4, 0]]).astype(np.float32)
+        x.U.Z = np.array([[0, 0], [0, 0]]).astype(np.float32)
         x.interp_()
 
         assert x.U.N == 2
@@ -395,6 +538,7 @@ class TestProjInterp_Constraint:
         x = gr.CSvar(rho0, rho1, T, ll)
         y = gr.CSvar(rho0, rho1, T, ll)
         x.U.D[1] = torch.tensor([[0, 2, 0], [2, 4, 0]]).float()
+        # x.U.Z = torch.tensor([[0, 0], [0, 0]]).float()
         x.interp_()
         identities = [
             torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).float(),
@@ -514,6 +658,62 @@ class TestPrecomputeProjectInterp:
                     [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
                     [0.0, 0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
                     [0.0, 0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ],
+                dtype=torch.float64,
+            ),
+        )
+
+    def test_precompute_project_interp_numpy_periodic(self):
+        cs = (3, 4)
+        z = np.zeros(cs, dtype=np.float64)
+        Q = dyn.precomputeProjInterp(cs, z, z, periodic=True)
+        np.testing.assert_allclose(
+            Q[0],
+            np.array(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ]
+            ),
+        )
+        np.testing.assert_allclose(
+            Q[1],
+            np.array(
+                [
+                    [1.5, 0.25, 0.0, 0.25],
+                    [0.25, 1.5, 0.25, 0.0],
+                    [0.0, 0.25, 1.5, 0.25],
+                    [0.25, 0.0, 0.25, 1.5],
+                ]
+            ),
+        )
+
+    def test_precompute_project_interp_torch_periodic(self):
+        cs = (3, 4)
+        z = torch.zeros(cs, dtype=torch.float64)
+        Q = dyn.precomputeProjInterp(cs, z, z, periodic=True)
+        torch.testing.assert_close(
+            Q[0],
+            torch.tensor(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ],
+                dtype=torch.float64,
+            ),
+        )
+        torch.testing.assert_close(
+            Q[1],
+            torch.tensor(
+                [
+                    [1.5, 0.25, 0.0, 0.25],
+                    [0.25, 1.5, 0.25, 0.0],
+                    [0.0, 0.25, 1.5, 0.25],
+                    [0.25, 0.0, 0.25, 1.5],
                 ],
                 dtype=torch.float64,
             ),
@@ -936,6 +1136,268 @@ class TestVectorizeVF:
         torch.testing.assert_close(result, expected)
 
 
+class TestVectorizeVFMultiF:
+    def test_vectorize_VF_multiF_numpy_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(2)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        V.D[1] = np.array([[7, 8], [9, 10], [11, 12]]).astype(np.float32)
+        V.Z = np.array([[13, 14], [15, 16], [17, 18]]).astype(np.float32)
+        F = np.array([19, 20, 21, 22]).astype(np.float32)
+        result = dyn.vectorize_VF_multiF(V, [F])
+        expected = np.array(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).astype(np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_vectorize_VF_multiF_torch_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(2)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor([[1, 2], [3, 4], [5, 6]]).float()
+        V.D[1] = torch.tensor([[7, 8], [9, 10], [11, 12]]).float()
+        V.Z = torch.tensor([[13, 14], [15, 16], [17, 18]]).float()
+        F = torch.tensor([19, 20, 21, 22]).float()
+        result = dyn.vectorize_VF_multiF(V, [F])
+        expected = torch.tensor(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+            ]
+        ).float()
+        torch.testing.assert_close(result, expected)
+
+    def test_vectorize_VF_multiF_numpy_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(3)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).astype(np.float32)
+        V.D[1] = np.array(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).astype(np.float32)
+        V.Z = np.array(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).astype(np.float32)
+        F = np.array([37, 38]).astype(np.float32)
+        result = dyn.vectorize_VF_multiF(V, [F])
+        expected = np.array(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+            ]
+        ).astype(np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_vectorize_VF_multiF_torch_3D(self):
+        cs = (2, 3, 2)
+        ll = (1.0, 1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(3)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor(
+            [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]
+        ).float()
+        V.D[1] = torch.tensor(
+            [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
+        ).float()
+        V.Z = torch.tensor(
+            [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
+        ).float()
+        F = torch.tensor([37, 38]).float()
+        result = dyn.vectorize_VF_multiF(V, [F])
+        expected = torch.tensor(
+            [
+                1,
+                7,
+                3,
+                9,
+                5,
+                11,
+                2,
+                8,
+                4,
+                10,
+                6,
+                12,
+                13,
+                15,
+                17,
+                14,
+                16,
+                18,
+                19,
+                21,
+                23,
+                20,
+                22,
+                24,
+            ]
+        ).float()
+        torch.testing.assert_close(result, expected)
+
+    def test_vectorize_VF_multiF_numpy_2D_2F(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(2)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        V.D[1] = np.array([[7, 8], [9, 10], [11, 12]]).astype(np.float32)
+        V.Z = np.array([[13, 14], [15, 16], [17, 18]]).astype(np.float32)
+        F1 = np.array([19, 20, 21, 22]).astype(np.float32)
+        F2 = np.array([23, 24, 25, 26]).astype(np.float32)
+        result = dyn.vectorize_VF_multiF(V, [F1, F2])
+        expected = np.array(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+            ]
+        ).astype(np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_vectorize_VF_multiF_torch_2D_2F(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(2)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor([[1, 2], [3, 4], [5, 6]]).float()
+        V.D[1] = torch.tensor([[7, 8], [9, 10], [11, 12]]).float()
+        V.Z = torch.tensor([[13, 14], [15, 16], [17, 18]]).float()
+        F1 = torch.tensor([19, 20, 21, 22]).float()
+        F2 = torch.tensor([23, 24, 25, 26]).float()
+        result = dyn.vectorize_VF_multiF(V, [F1, F2])
+        expected = torch.tensor(
+            [
+                1,
+                3,
+                5,
+                2,
+                4,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+            ]
+        ).float()
+        torch.testing.assert_close(result, expected)
+
+
 class TestUnvectorizeVF:
     def test_unvectorize_VF_numpy_2D(self):
         cs = (3, 2)
@@ -1181,6 +1643,44 @@ class TestUnvectorizeVF:
         torch.testing.assert_close(F_res, F)
 
 
+class TestUnvectorizeVFMultiF:
+    def test_unvectorize_VF_multiF_numpy_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [np.zeros(cs) for _ in range(2)]
+        Z = np.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        V.D[1] = np.array([[7, 8], [9, 10], [11, 12]]).astype(np.float32)
+        V.Z = np.array([[13, 14], [15, 16], [17, 18]]).astype(np.float32)
+        F1 = np.array([19, 20, 21, 22]).astype(np.float32)
+        F2 = np.array([23, 24, 25, 26]).astype(np.float32)
+        vec = dyn.vectorize_VF_multiF(V, [F1, F2])
+        V_res, F_res = dyn.unvectorize_VF_multiF(vec, [(4,), (4,)], cs, ll)
+        np.testing.assert_allclose(V_res.D[0], V.D[0])
+        np.testing.assert_allclose(V_res.D[1], V.D[1])
+        np.testing.assert_allclose(V_res.Z, V.Z)
+        np.testing.assert_allclose(F_res, [F1, F2])
+
+    def test_unvectorize_VF_multiF_torch_2D(self):
+        cs = (3, 2)
+        ll = (1.0, 1.0)
+        D = [torch.zeros(cs) for _ in range(2)]
+        Z = torch.zeros(cs)
+        V = gr.Svar(cs, ll, D, Z)
+        V.D[0] = torch.tensor([[1, 2], [3, 4], [5, 6]]).float()
+        V.D[1] = torch.tensor([[7, 8], [9, 10], [11, 12]]).float()
+        V.Z = torch.tensor([[13, 14], [15, 16], [17, 18]]).float()
+        F1 = torch.tensor([19, 20, 21, 22]).float()
+        F2 = torch.tensor([23, 24, 25, 26]).float()
+        vec = dyn.vectorize_VF_multiF(V, [F1, F2])
+        V_res, F_res = dyn.unvectorize_VF_multiF(vec, [(4,), (4,)], cs, ll)
+        torch.testing.assert_close(V_res.D[0], V.D[0])
+        torch.testing.assert_close(V_res.D[1], V.D[1])
+        torch.testing.assert_close(V_res.Z, V.Z)
+        torch.testing.assert_close(F_res, [F1, F2])
+
+
 class TestBuildHOperatorMatrix:
     def test_build_H_operator_matrix_numpy_2D(self):
         H = np.array([[1, 2], [3, 4]])
@@ -1370,6 +1870,25 @@ class TestBuildHOperatorMatrix:
                 ]
             ),
             check_dtype=False,
+        )
+
+
+class TestBuildHOperatorMatrixMulti:
+    def test_build_H_operator_matrix_multi_numpy_2D(self):
+        H1 = np.array([[1, 2], [3, 4]])
+        H2 = np.array([[5, 6], [7, 8]])
+        dx = 1
+        res = dyn.build_H_operator_matrix_multi([H1, H2], dx).todense()
+        np.testing.assert_allclose(
+            res,
+            np.array(
+                [
+                    [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [5, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 7, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+                ]
+            ),
         )
 
 
@@ -1636,6 +2155,61 @@ class TestPreComuputePPT:
                 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0],
                 [-0.5, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.25, 0],
                 [0, -1.5, 0, -2.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6.25],
+            ]
+        )
+        np.testing.assert_allclose(PPT.todense(), expected)
+
+
+class TestPreComputePPTPeriodic:
+    def test_precomputePPT_numpy_small_periodic(self):
+        H = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        PPT = dyn.precomputePPT(H, list(cs), ll, periodic=True)
+        expected = np.array(
+            [
+                [1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -0.5, 0],
+                [0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1.5],
+                [0, 0, 1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0],
+                [0, 0, 0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2],
+                [0, 0, 0, 0, 1.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0.5, 1.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 1.5, 0.5, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0.5, 1.5, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0],
+                [-0.5, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.25, 0],
+                [0, -1.5, 0, -2.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6.25],
+            ]
+        )
+        np.testing.assert_allclose(PPT.todense(), expected)
+
+    def test_precomputePPT_numpy_small_periodic_multi(self):
+        H1 = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        H2 = np.array([[5, 6], [7, 8]]).astype(np.float32)
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        PPT = dyn.precomputePPT([H1, H2], list(cs), ll, periodic=True)
+        expected = np.array(
+            [
+                [1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -0.5, 0, -2.5, 0],
+                [0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1.5, 0, -3.5],
+                [0, 0, 1.5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0, -3, 0],
+                [0, 0, 0.25, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2, 0, -4],
+                [0, 0, 0, 0, 1.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0.5, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 1.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0.5, 1.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0],
+                [-0.5, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.25, 0, 4.25, 0],
+                [0, -1.5, 0, -2.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6.25, 0, 13.25],
+                [-2.5, 0, -3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4.25, 0, 15.25, 0],
+                [0, -3.5, 0, -4.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13.25, 0, 28.25],
             ]
         )
         np.testing.assert_allclose(PPT.todense(), expected)

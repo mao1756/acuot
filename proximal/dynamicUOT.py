@@ -1,6 +1,6 @@
 import proximal.grids as grids
 from proximal.backend_extension import get_backend_ext
-from proximal.backend_extension import NumpyBackend_ext
+from proximal.backend_extension import NumpyBackend_ext, TorchBackend_ext
 from ot.backend import Backend
 from ot.utils import list_to_array
 import numpy as np
@@ -145,19 +145,70 @@ def poisson_(f, ll, source, nx: Backend):
     else:
         D[0] = 1
 
-    # dctn
-    """
-    renorm =  math.prod(N) * (2**d)
-    f[...] = nx.dctn(f, axes=range(d))
-    f /= -D * renorm
-    f[...] = nx.idctn(f, axes=range(d))
-    """
     # axis wise DCT
     for axe in range(d):
         f[...] = nx.dct(f, axis=axe, norm="ortho")
     f /= -D
     for axe in range(d):
         f[...] = nx.idct(f, axis=axe, norm="ortho")
+
+
+def poisson_mixed_bc_(f, ll, source, nx, periodic_axes=None):
+    """
+    Solve (Δu) + f = 0   or   (Δ - 1)u + f = 0  on a Cartesian grid where
+    axis 0  : Neumann BC  (time)      → DCT-II
+    axes in `periodic_axes` : periodic BC (space) → complex FFT.
+
+    The solution overwrites `f` in-place (like your original routine).
+
+    Args
+    ----
+    f : ndarray      right-hand side (will be overwritten by the solution)
+    ll : tuple(float) physical lengths of each axis
+    source : bool    if True solve (Δ-1)u = -f, else Δu = -f
+    nx : module      numerical backend (NumPy, JAX, torch, cupy, …)
+    periodic_axes : iterable of ints, default (1,…,d-1)
+    """
+    d = f.ndim
+    if periodic_axes is None:
+        periodic_axes = tuple(range(1, d))  # all spatial axes
+    N = f.shape
+    h = [L / n for L, n in zip(ll, N)]
+
+    # --- build the diagonal Λ(k0,…,kd-1) -----------------------------
+    D = nx.zeros(f.shape, type_as=f)
+    for ax in range(d):
+        k = nx.arange(N[ax], type_as=f)  # mode indices
+        if ax in periodic_axes:  # periodic
+            lam = (2 * nx.cos(2 * math.pi * k / N[ax]) - 2) / h[ax] ** 2
+        else:  # Neumann
+            lam = (2 * nx.cos(math.pi * k / N[ax]) - 2) / h[ax] ** 2
+        # broadcast along the other axes
+        shape = [1] * d
+        shape[ax] = N[ax]
+        D += lam.reshape(shape)
+
+    if source:  # Helmholtz: (Δ - 1)u = -f
+        D -= 1.0
+    else:  # pure Poisson: make Λ(0,...,0)=1 to avoid 0-div
+        D[(0,) * d] = 1.0
+
+    # --- forward transforms -----------------------------------------
+    # time axis (Neumann)
+    fhat = nx.dct(f, axis=0, norm="ortho")
+
+    # spatial axes (periodic)
+    for ax in periodic_axes:
+        fhat = nx.fft(fhat, axis=ax, norm="ortho")  # complex output
+        # We note that writing f[...] = nx.fft(fhat, axis=ax, norm="ortho") would throw away the imaginary part since the
+        # f is real-valued, so we need to keep the complex output in fhat.
+    # --- diagonal solve ---------------------------------------------
+    fhat /= -D  # broadcast div
+    # --- inverse transforms (reverse order) -------------------------
+    for ax in reversed(periodic_axes):
+        fhat = nx.ifft(fhat, axis=ax, norm="ortho").real
+
+    f[...] = nx.idct(fhat, axis=0, norm="ortho")  # back to space
 
 
 def minus_interior_(dest, M, dpk, cs, dim):
@@ -182,29 +233,48 @@ def minus_interior_(dest, M, dpk, cs, dim):
     dest[tuple(slices)] = interior_diff
 
 
-def projCE_(dest: grids.Svar, U: grids.Svar, rho_0, rho_1, source: bool):
+def projCE_(
+    dest: grids.Svar, U: grids.Svar, rho_0, rho_1, source: bool, periodic: bool = False
+):
     """ Given a staggered variable U, project it so that it satisfies the \
         continuity equation. The result is stored in dest in place.
-
+        Steps:
+        p <- Z - div(U)
+        u <- poisson(p) (Solve the Poisson equation)
+        dpk = (dp/dt, dp/dx1, dp/dx2, ...,  p) (on the staggered grid)
+        U = U - interior of dpk
+        Note that the interior means the array where the time/space(periodic = False) or time (periodic = True) boundary was removed (zeroed out)
     Args:
         dest (Svar): The destination variable.
         U (Svar): The source variable.
         rho_0 (array): The source density.
         rho_1 (array): The destination density.
         source (bool): True if we are solving a OT with source problem.
+        periodic (bool): True if we are solving a OT with periodic BC.
     """
 
     assert dest.ll == U.ll, "Destination and source lengths must match"
 
-    U.proj_BC(rho_0, rho_1)
-    p = -U.remainder_CE()
-    poisson_(p, U.ll, source, dest.nx)
+    U.proj_BC(rho_0, rho_1, periodic=periodic)
+    p = -U.remainder_CE(periodic=periodic)  # p = Z - div(U)
+    if periodic:
+        poisson_mixed_bc_(p, U.ll, source, dest.nx)
+    else:
+        poisson_(p, U.ll, source, dest.nx)
 
     for k in range(len(U.cs)):
-        dpk = dest.nx.diff(p, axis=k) * U.cs[k] / U.ll[k]
-        minus_interior_(dest.D[k], U.D[k], dpk, U.cs, k)
+        # In periodic case, subtract the interior for the time dim.
+        # Otherwise (space dims), subtract entirely (because there is no boundary in the first place)
+        # Note that the gradient for the forward divergence is the backward difference
+        if periodic and k != 0:
+            dpk = (p - dest.nx.roll(p, 1, axis=k)) * U.cs[k] / U.ll[k]
+            dest.D[k][...] = U.D[k] - dpk
+        else:
+            dpk = dest.nx.diff(p, axis=k) * U.cs[k] / U.ll[k]
 
-    dest.proj_BC(rho_0, rho_1)
+            minus_interior_(dest.D[k], U.D[k], dpk, U.cs, k)
+
+    dest.proj_BC(rho_0, rho_1, periodic=periodic)
     if source:
         dest.Z[...] = U.Z - p
 
@@ -277,7 +347,7 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     x_U_copy = x.U.copy()  # Copy x.U since interpT_ will overwrite x.U if dest=x
 
     # Calculate I*V and store it in U'
-    grids.interpT_(dest.U, x.V)
+    grids.interpT_(dest.U, x.V, dest.periodic)
     # Add U to I*V and store it in U'... (*)
     dest.U += x_U_copy
 
@@ -375,7 +445,7 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     )
     Hstar_lambda = ((cat + dest.nx.roll(cat, -1, axis=0)) / 2)[tuple(slices)]
     # Copy for debugging
-    Hstar_lambda_copy = Hstar_lambda.copy()
+    # Hstar_lambda_copy = Hstar_lambda.copy()
 
     # Calculate U' = Q^{-1}H^* lambda
     invQ_mul_A_(Hstar_lambda, Q[0], Hstar_lambda, 0, dest.nx)
@@ -409,79 +479,61 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     interpT_V_diff = grids.interpT(V_diff)
 
     # Calculate the staggered variable H^* lambda
-    U_hstar_lambda = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll)
-    U_hstar_lambda.U.D[0] = Hstar_lambda_copy
-    U_hstar_lambda = U_hstar_lambda.U
+    # U_hstar_lambda = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll)
+    # U_hstar_lambda.U.D[0] = Hstar_lambda_copy
+    # U_hstar_lambda = U_hstar_lambda.U
 
     # Calculate U'-U_copy + I*(V'-V_copy) + H^* lambda
-    first_order_condition = dest.U - x.U + interpT_V_diff + U_hstar_lambda
+    # first_order_condition = dest.U - x.U + interpT_V_diff + U_hstar_lambda
 
-    dens_norm = 0
+    # dens_norm = 0
     # Calculate the norm for each dimension
-    for dens in first_order_condition.D:
-        dens_norm += dest.nx.norm(dens) ** 2
-    log["first_order_condition"].append(dest.nx.sqrt(dens_norm))
+    # for dens in first_order_condition.D:
+    #    dens_norm += dest.nx.norm(dens) ** 2
+    # log["first_order_condition"].append(dest.nx.sqrt(dens_norm))
 
 
-def projinterp_constraint_dykstra(
-    dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, eps=10e-3, maxiter=1000, log=None
-):
-    """Calculate the projection of the interpolation, constraint operator AND positivity for x.
+def periodic_interpolation_matrix(N, nx: Backend, type_as=None):
+    """Return the N×N matrix I_N with ½ on the main and +1 cyclic diagonals."""
+    I_N = nx.zeros((N, N), type_as=type_as)
+    idx = nx.arange(N)
+    I_N[idx, idx] = 0.5  # main diagonal
+    I_N[idx, (idx + 1) % N] = 0.5  # super-diagonal with wrap-around
+    return I_N
 
-    Given the input x=(U,V), calculate the projection of interpolation&constraint
-    operator AND positivity constraint using the Dykstra algorithm. We alternatively apply the projection of the interpolation/constraint operator and the positivity constraint.
 
-    Args:
-        dest (CSvar): The destination variable.
-        x (CSvar): The input variable.
-        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where\
-        Qk = Id + I^T I such that I is the interpolation matrix.
-        HQH (array of shape (cs[0], cs[0])): The matrix HQ^{-1}H* where H=hI and \
-            h is the H function for the constraint.
-        H (array of shape cs): The H function for the constraint.
-        F (array of shape (cs[0],)): The right-hand side of the constraint.
-        eps (float): The tolerance for the algorithm.
-        maxiter (int): The maximum number of iterations for the algorithm.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
+def itit_plus_identity(N, nx: Backend, type_as=None):
     """
-    p = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
-    q = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
-    y = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
-    x_new = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll, init="zero")
-    tolerance = float("inf")
-    niter = 0
-    while tolerance > eps and niter < maxiter:
-        niter += 1
-        projinterp_constraint_(y, x + p, Q, HQH, H, F, log)
-        p = x + p - y
-        x_new = y + q
-        x_new.proj_positive()
-        q = y + q - x_new
-        tolerance = (x - x_new).norm()
-        x = x_new
-        print(niter, tolerance)
-
-    if niter == maxiter:
-        print("Dykstra algorithm did not converge. Increase the number of iterations.")
-
-    dest.U = x.U
-    dest.V = x.V
+    Compute I_N.T @ I_N + Id for the periodic interpolation matrix I_N.
+    The result is a circulant, tridiagonal-with-wrap matrix whose entries are
+        1.5 on the diagonal and 0.25 on the ±1 cyclic off-diagonals.
+    """
+    idx = nx.arange(N)
+    M = nx.zeros((N, N), type_as=type_as)
+    M[idx, idx] = 1.5
+    M[idx, (idx + 1) % N] = 0.25
+    M[idx, (idx - 1) % N] = 0.25
+    return M
 
 
-def precomputeProjInterp(cs, rho0, rho1):
+def precomputeProjInterp(cs, rho0, rho1, periodic=False):
     B = []
     nx = get_backend_ext(rho0, rho1)
-    for n in cs:
-        # Create a tridiagonal matrix
-        main_diag = nx.full((n + 1,), 6, type_as=rho0)
-        main_diag[0], main_diag[-1] = 5, 5  # Adjust the first and last element
-        off_diag = nx.ones(n, type_as=rho0)
-        Q = nx.diag(off_diag, -1) + nx.diag(main_diag, 0) + nx.diag(off_diag, 1)
-        Q /= 4
-        # Store the result
-        B.append(Q)
+    for i in range(len(cs)):
+        n = cs[i]
+        if periodic and i != 0:
+            # For the space dimension, use the periodic interpolation matrix
+            Q = itit_plus_identity(n, nx, type_as=rho0)
+            B.append(Q)
+        else:
+            # Create a tridiagonal matrix
+            main_diag = nx.full((n + 1,), 6, type_as=rho0)
+            main_diag[0], main_diag[-1] = 5, 5  # Adjust the first and last element
+            off_diag = nx.ones(n, type_as=rho0)
+            Q = nx.diag(off_diag, -1) + nx.diag(main_diag, 0) + nx.diag(off_diag, 1)
+            Q /= 4
+            # Store the result
+            B.append(Q)
     return B
 
 
@@ -591,19 +643,31 @@ def unflatten_array(vec, shape: tuple[int, ...], fastest_axis: int = 0):
 
 def vectorize_VF(V, F):
     """
-    Vectorize the V and F variables into a single 1D vector.
+    Vectorise the staggered-grid variables stored in ``V`` together with the
+    1-D array ``F`` into a single flat vector.
 
     Parameters
     ----------
     V : Svar
-        The staggered variable V. The shape of each density is (N0, N1, ..., N_{N - 1}).
+        Staggered variable containing
+        * a list ``V.D`` of ``V.N`` flux arrays, and
+        * a cell-centred density array ``V.Z``.
+        Each array has shape corresponding to the computational grid;
+        the flux arrays may be staggered along their own axes.
     F : np.ndarray
-        N-dimensional array of shape (N_{N - 1}).
+        1-D array holding an additional field (e.g. external force or source).
+        Its length does **not** have to equal any particular power-of-grid size.
 
     Returns
     -------
-    vec : np.ndarray
-        A 1D vector of shape (2 * N0 * N1 * ... * N_{N - 1}).
+    np.ndarray
+        1-D vector obtained by concatenating
+
+        1. ``flatten_array(V.D[i], fastest_axis=i)`` for ``i = 0 … V.N-1``
+        2. ``flatten_array(V.Z, fastest_axis=V.N-1)``
+        3. ``F``
+
+        The length is ``(V.N + 1) * np.prod(V.Z.shape) + F.size``.
     """
     # Get the backend module
     nx = get_backend_ext(F)
@@ -617,6 +681,37 @@ def vectorize_VF(V, F):
     # Concatenate the two vectors
     vec = nx.concatenate(res)
     return vec
+
+
+def vectorize_VF_multiF(V, F_list):
+    """
+    Flatten V and *all* Fᵢ into one long 1-D array.
+
+    Parameters
+    ----------
+    V : Svar
+    F_list : Sequence[np.ndarray]   #  each of length N0
+
+    Returns
+    -------
+    1-D array of length (V-part) + n·N0
+    """
+    nx = get_backend_ext(F_list[0])
+    if not isinstance(F_list, list):
+        raise TypeError("F_list must be a list of arrays")
+    pieces = []
+
+    # 1. fluxes
+    for i in range(V.N):
+        pieces.append(flatten_array(V.D[i], fastest_axis=i))
+
+    # 2. centred density
+    pieces.append(flatten_array(V.Z, fastest_axis=V.N - 1))
+
+    # 3. all right–hand sides
+    pieces.extend(F_list)
+
+    return nx.concatenate(pieces)
 
 
 def unvectorize_VF(vec, F_shape, cs, ll):
@@ -639,7 +734,7 @@ def unvectorize_VF(vec, F_shape, cs, ll):
     V : Svar
         The staggered variable V.
     F : np.ndarray
-        The N-dimensional array F.
+        The 1D array F.
     """
     # Get the backend module
     nx = get_backend_ext(vec)
@@ -648,14 +743,41 @@ def unvectorize_VF(vec, F_shape, cs, ll):
     D = [nx.zeros(cs, type_as=vec) for _ in range(len(cs))]
     Z = nx.zeros(cs, type_as=vec)
     V = grids.Cvar(cs, ll, D, Z)
-    F = vec[-F_shape:]  # noqa: E203
-    vec = vec[:-F_shape].reshape(-1, math.prod(cs))
+    F = vec[-F_shape:] if F_shape > 0 else None  # noqa: E203
+    vec = (
+        vec[:-F_shape].reshape(-1, math.prod(cs))
+        if F_shape > 0
+        else vec.reshape(-1, math.prod(cs))
+    )
 
     for i in range(V.N):
         V.D[i] = unflatten_array(vec[i], shape=cs, fastest_axis=i)
     V.Z = unflatten_array(vec[V.N], shape=cs, fastest_axis=V.N - 1)
 
     return V, F
+
+
+def unvectorize_VF_multiF(vec, F_shapes, cs, ll):
+    """
+    Inverse of vectorize_VF_multiF.
+
+    F_shapes : Sequence[int]   # e.g. [N0]*n
+    """
+    nx = get_backend_ext(vec)
+    F_list = []
+
+    # 1. peel off the F blocks (last to first for convenience)
+    tail = vec
+    for length in reversed(F_shapes):
+        F_list.append(tail[-length[0] :])  # noqa: E203
+        tail = tail[: -length[0]]
+    F_list.reverse()  # restore original order
+
+    # 2. the remainder is V-part  (exactly as before)
+    V_part = tail
+    V, _dump = unvectorize_VF(V_part, 0, cs, ll)  # reuse your old helper
+
+    return V, F_list
 
 
 def build_H_operator_matrix(H, dx: float, fastest_axis: int = 0):
@@ -672,7 +794,7 @@ def build_H_operator_matrix(H, dx: float, fastest_axis: int = 0):
         N-dimensional array of shape (N0, N1, ..., N_{n-1}).
     dx : float
         Scalar factor that multiplies each H-element in the operator.
-    fastest_axis : int, default=1
+    fastest_axis : int, default=0
         The axis that is used as the fastest in flatten_array/unflatten_array.
 
     Returns
@@ -746,6 +868,25 @@ def build_H_operator_matrix(H, dx: float, fastest_axis: int = 0):
     return nx.tocsr(M)  # This returns dense matrix for torch backend
 
 
+def build_H_operator_matrix_multi(H_list, dx, fastest_axis=0):
+    """
+    Return the sparse matrix of size (n·N0) x (3·N0·N1)
+    representing all n constraints in one shot.
+    """
+    nx = get_backend_ext(H_list[0])
+    if nx == TorchBackend_ext:
+        # Torch backend does not support sparse matrices
+        raise NotImplementedError(
+            "Affine constraints with Torch backend are not supported yet."
+        )
+
+    blocks = [
+        build_H_operator_matrix(H_i, dx, fastest_axis) for H_i in H_list
+    ]  # each is (N0) × (3·N0·N1)
+    conc = sps.vstack(blocks)
+    return conc  # shape = n·N0 rows
+
+
 def I_of_N(N):
     """
     Construct the matrix I(N) of shape (N, N+1) where each row has two 0.5 entries:
@@ -760,7 +901,7 @@ def I_of_N(N):
     return M
 
 
-def build_big_block(N_list: list, nx: Backend):
+def build_big_block(N_list: list, nx: Backend, periodic=False):
     """
     1) Given N_list = [N0, ..., N_N], build [I(N_0), ..., I(N_N)].
     2) For each j, build Q[j] = I(N_j) @ I(N_j).T + Identity(N_j).
@@ -770,8 +911,13 @@ def build_big_block(N_list: list, nx: Backend):
     """
     # Step 1 & 2: build each Q_j
     Q_list = []
-    for N_j in N_list:
-        I_Nj = I_of_N(N_j)
+    for i in range(len(N_list)):
+        N_j = N_list[i]
+        I_Nj = (
+            I_of_N(N_j)
+            if not periodic or i == 0
+            else periodic_interpolation_matrix(N_j, nx)
+        )
         Q_j = I_Nj @ I_Nj.T + np.eye(N_j)  # N_j x N_j
         Q_list.append(sps.csr_matrix(Q_j))
 
@@ -794,12 +940,15 @@ def build_big_block(N_list: list, nx: Backend):
     return nx.tocsr(nx.from_numpy(big_block))
 
 
-def precomputePPT(H, cs, ll):
-    nx = get_backend_ext(H)
-    H_numpy = nx.to_numpy(H)
+def precomputePPT(H, cs, ll, periodic=False):
+    """Precompute the matrix P^T P where P is the interpolation operator."""
+    if not isinstance(H, list):
+        H = [H]
+    nx = get_backend_ext(*H)
+    H_numpy = [nx.to_numpy(H_i) for H_i in H]
     numpy_back = NumpyBackend_ext()
-    II_block = build_big_block(cs, numpy_back)
-    H_op = build_H_operator_matrix(
+    II_block = build_big_block(cs, numpy_back, periodic=periodic)
+    H_op = build_H_operator_matrix_multi(
         H_numpy, math.prod(ll[1:]) / math.prod(cs[1:]), fastest_axis=0
     )
     # Check shapes before constructing the block
@@ -813,17 +962,27 @@ def precomputePPT(H, cs, ll):
     # 2) C.shape[0] == D.shape[0]  (bottom row blocks must align in rows)
     # 3) A.shape[1] == C.shape[1]  (left column blocks must align in columns)
     # 4) B.shape[1] == D.shape[1]  (right column blocks must align in columns)
-    assert rows_II == rows_HT, "Top row blocks do not align in rows."
-    assert rows_H == rows_HopHopT, "Bottom row blocks do not align in rows."
-    assert cols_II == cols_H, "Left column blocks do not align in columns."
-    assert cols_HT == cols_HopHopT, "Right column blocks do not align in columns."
+    assert rows_II == rows_HT, "Top row blocks do not align in rows: {} vs {}".format(
+        rows_II, rows_HT
+    )
+    assert (
+        rows_H == rows_HopHopT
+    ), "Bottom row blocks do not align in rows: {} vs {}".format(rows_H, rows_HopHopT)
+    assert (
+        cols_II == cols_H
+    ), "Left column blocks do not align in columns: {} vs {}".format(cols_II, cols_H)
+    assert (
+        cols_HT == cols_HopHopT
+    ), "Right column blocks do not align in columns: {} vs {}".format(
+        cols_HT, cols_HopHopT
+    )
 
     PPT = sps.block_array([[II_block, -H_op.T], [-H_op, H_opH_opT]], format="csr")
     return nx.tocsr(nx.from_numpy(PPT))
 
 
 def projinterp_constraint_big_matrix(
-    dest: grids.CSvar, x: grids.CSvar, solve: callable, H, F, log=None
+    dest: grids.CSvar, x: grids.CSvar, solve: callable, H, F, log=None, periodic=False
 ):
     """Calculate the projection of the interpolation and the constraint operator by constructing a big matrix.
 
@@ -858,25 +1017,38 @@ def projinterp_constraint_big_matrix(
             "lambda_eqn": [],
         }
     nx = x.nx
+    if not isinstance(H, list):
+        H = [H]
+    if not isinstance(F, list):
+        F = [F]
+    if len(H) != len(F):
+        raise ValueError("H and F must have the same length.")
     if not isinstance(nx, NumpyBackend_ext):
         raise ValueError("The backend must be numpy. {} is not supported.".format(nx))
     # Calculate (O, F) - P(U, V) = (V - I(U), F - HV)
-    V_minus_IU = x.V - grids.interp(x.U)
-    F_minus_HV = F - nx.sum(x.V.D[0] * H, axis=tuple(range(1, H.ndim))) * math.prod(
-        x.ll[1:]
-    ) / math.prod(x.cs[1:])
+    V_minus_IU = x.V - grids.interp(x.U, periodic=periodic)
+    F_minus_HV = [
+        F_i
+        - nx.sum(x.V.D[0] * H_i, axis=tuple(range(1, H_i.ndim)))
+        * math.prod(x.ll[1:])
+        / math.prod(x.cs[1:])
+        for F_i, H_i in zip(F, H)
+    ]
 
     # Solve the linear system to calculate (P P^T)^{-1} ((O, F) - P(U, V))
-    vec = vectorize_VF(V_minus_IU, F_minus_HV)
+    vec = vectorize_VF_multiF(V_minus_IU, F_minus_HV)
     vec = solve(vec)
-    new_V, new_F = unvectorize_VF(vec, F.shape[0], x.cs, x.ll)
+    new_V, new_F = unvectorize_VF_multiF(
+        vec, tuple([F_i.shape for F_i in F]), x.cs, x.ll
+    )
 
     # Calculate (U', V') =  P^T(new_V, new_F) = (I* new_V, - new_V + H^*new_F )
-    dest.U = grids.interpT(new_V)
-    Hstar_new_F = (
-        H
-        * new_F[(slice(None),) + (None,) * (H.ndim - 1)]
+    dest.U = grids.interpT(new_V, periodic=periodic)
+    Hstar_new_F = sum(
+        H_i
+        * new_F_i[(slice(None),) + (None,) * (H_i.ndim - 1)]
         * (math.prod(x.ll[1:]) / math.prod(x.cs[1:]))
+        for H_i, new_F_i in zip(H, new_F)
     )
     dest.V = (-1.0) * new_V
     dest.V.D[0] += Hstar_new_F
@@ -917,10 +1089,9 @@ def computeGeodesic(
     q=2.0,
     delta=1.0,
     niter=1000,
-    dykstra=False,
     big_matrix=False,
+    periodic=False,
     eps=10e-3,
-    niter_dykstra=500,
     alpha=None,
     gamma=None,
     verbose=False,
@@ -951,7 +1122,6 @@ def computeGeodesic(
         q (float): The q-norm for the energy functional.
         delta (float): The scaling factor for the grid.
         niter (int): The number of iterations for the algorithm.
-        dykstra (bool): If True, use the Dykstra algorithm to enforce the positivity constraint.
         eps (float): The tolerance for the Dykstra algorithm.
         alpha (float): The step size for the Douglas-Rachford algorithm.
         gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
@@ -978,8 +1148,10 @@ def computeGeodesic(
 
     nx = get_backend_ext(rho0, rho1)
 
-    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
-        projCE_(y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
+        projCE_(
+            y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+        )
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(
@@ -990,21 +1162,14 @@ def computeGeodesic(
         HQH=None,
         H=None,
         F=None,
-        dykstra=False,
         big_matrix=False,
-        eps=10e-3,
-        niter_dykstra=1000,
     ):
         if HQH is None or H is None or F is None:
             projinterp_(y, x, Q, log)
         else:
             if big_matrix:
-                projinterp_constraint_big_matrix(y, x, solve, H, F, log)
+                projinterp_constraint_big_matrix(y, x, solve, H, F, log, periodic)
                 return
-            if dykstra:
-                projinterp_constraint_dykstra(
-                    y, x, Q, HQH, H, F, eps=10e-3, maxiter=niter_dykstra, log=log
-                )
             else:
                 projinterp_constraint_(y, x, Q, HQH, H, F, log)
 
@@ -1033,7 +1198,9 @@ def computeGeodesic(
             gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
 
     # Initialization
-    w, x, y, z = [grids.CSvar(rho0, rho1, T, ll, init, U, V) for _ in range(4)]
+    w, x, y, z = [
+        grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(4)
+    ]
 
     # Change of variable for scale adjustment
     for var in [w, x, y, z]:
@@ -1042,9 +1209,17 @@ def computeGeodesic(
         var.rho0 *= delta**rho0.ndim
 
     # Precompute projection interpolation operators if needed
-    Q = precomputeProjInterp(x.cs, rho0, rho1)
-    HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
-    PPT = precomputePPT(H, list(x.cs), x.ll) if H is not None else None
+    Q = precomputeProjInterp(x.cs, rho0, rho1, periodic)
+    HQH = (
+        precomputeHQH(Q[0], H, x.cs, x.ll)
+        if not big_matrix and (H is not None)
+        else None
+    )
+    PPT = (
+        precomputePPT(H, list(x.cs), x.ll, periodic=periodic)
+        if big_matrix and (H is not None)
+        else None
+    )
     solve = spsla.factorized(PPT) if PPT is not None else None
 
     Flist, Clist, Ilist = (
@@ -1065,9 +1240,16 @@ def computeGeodesic(
             x,
             y,
             z,
-            lambda y, x: prox1(y, x, source, gamma, p, q),
+            lambda y, x: prox1(y, x, source, gamma, p, q, periodic),
             lambda y, x: prox2(
-                y, x, Q, solve, HQH, H, F, dykstra, big_matrix, eps, niter_dykstra
+                y,
+                x,
+                Q,
+                solve,
+                HQH,
+                H,
+                F,
+                big_matrix,
             ),
             alpha,
         )
@@ -1079,7 +1261,9 @@ def computeGeodesic(
             HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
-    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    projCE_(
+        z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+    )
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment

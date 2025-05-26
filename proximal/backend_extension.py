@@ -41,6 +41,12 @@ class NumpyBackend_ext(ob.NumpyBackend):
     def cos(self, x):
         return np.cos(x)
 
+    def fft(self, x, axis=-1, norm=None):
+        return np.fft.fft(x, axis=axis, norm=norm)
+
+    def ifft(self, x, axis=-1, norm=None):
+        return np.fft.ifft(x, axis=axis, norm=norm)
+
     def dct(self, x, axis=-1, norm=None):
         return sp.fft.dct(x, axis=axis, norm=norm)
 
@@ -77,7 +83,14 @@ class TorchBackend_ext(ob.TorchBackend):
     def cos(self, x):
         return torch.cos(x)
 
+    def fft(self, x, axis=-1, norm=None):
+        return torch.fft.fft(x, dim=axis, norm=norm)
+
+    def ifft(self, x, axis=-1, norm=None):
+        return torch.fft.ifft(x, dim=axis, norm=norm)
+
     def dct(self, x, axis=-1, norm=None):
+        # since torch_dct supports DCT along the last axis only, we need to transpose the input tensor
         if torch_dct:
             transposed = torch.transpose(x, -1, axis)
             dct_d = torch_dct.dct(transposed, norm=norm)
