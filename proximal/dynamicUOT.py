@@ -7,6 +7,7 @@ import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as spsla
 import math
+from typing import List
 
 
 def root(a, b, c, d, nx: Backend):
@@ -405,7 +406,6 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
             "HQHlambda": [],
             "lambda_eqn": [],
         }
-
     projinterp_(dest, x, Q, log)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
 
     # Calculate HU'-F=H(Id+I^* I)^{-1}(U+I*V)-F
@@ -1058,6 +1058,79 @@ def projinterp_constraint_big_matrix(
     dest.V += x.V
 
 
+def project_constraint_inequality_single_(
+    dest: grids.CSvar, v: grids.CSvar, Hs: List, GL, GU
+):
+    """Project the variable x onto the constraint
+    GL(t) <= H(t, v) <= GU(t)
+    where v = (rho, omega, zeta) and
+    H(t, v) = int H_rho(t,x)rho(t, x) dx +  int <H_omega(t,x), omega(t, x) dx + int H_zeta(t, x)zeta(t, x) dx.
+    where H_rho, H_omega, and H_zeta are the H functions for the constraint.
+
+    This function modifies the destination variable dest in place.
+    The projection is done by the following formula:
+    dest = v - sum_{i=0->T-1} lambda_i(v) * H(t_i, *)/||H(t_i, *)||^2
+    Here, lambda_i(v)
+    = 0 if GL(t_i) <= H(t_i, v) <= GU(t_i),
+    = (H(t_i, v) - GL(t_i)) if H(t_i, v) < GL(t_i),
+    = (H(t_i, v) - GU(t_i)) if H(t_i, v) > GU(t_i).
+
+    Args:
+        dest (CSvar): The destination variable to be modified.
+        v (CSvar): The input variable to be projected.
+        Hs (list of arrays): The list of H functions for the constraint in the form
+            [H_rho, H_omega0, H_omega1,, ..., H_zeta]
+        GL (array): The lower bound of the constraint.
+        GU (array): The upper bound of the constraint.
+    """
+    if not isinstance(Hs, list):
+        raise ValueError("Hs must be a list of arrays.")
+    if len(Hs) != len(v.cs) + 1:
+        raise ValueError(
+            f"Hs must have exactly {len(v.cs) + 1} elements: H_rho, H_omega, H_zeta. We got: {len(Hs)} elements."
+        )
+    if any(H.shape != v.cs for H in Hs):
+        raise ValueError("All H functions must have the same shape as cs.")
+    if len(GL) != len(GU):
+        raise ValueError("GL and GU must have the same length.")
+    T = len(GL)  # time steps
+    print(
+        "NaNs in input variable:", [np.isnan(D).any() for D in v.V.D + [v.V.Z]]
+    )  # Check for NaNs in the input variable
+
+    dx = math.prod(v.ll[1:]) / math.prod(v.cs[1:])  # grid spacing
+    nx = get_backend_ext(GL, GU, *Hs)
+    ndim = len(v.cs)
+    # Calculate the lambda_i(v) for each time step
+    LHS = (
+        sum(
+            nx.sum(H_i * v_i, axis=tuple(range(1, ndim)))
+            for H_i, v_i in zip(Hs, v.V.D + [v.V.Z])
+        )
+        * dx
+    )
+    assert LHS.shape == (
+        T,
+    ), f"LHS must be a 1D array of shape (T,). We got: {LHS.shape}"
+    # LHS is now a 1D array of shape (T,)
+    lamda = nx.zeros(T, type_as=GL)
+    lamda = nx.where(LHS < GL, LHS - GL, lamda)  # if LHS < GL, then lambda = LHS - GL
+    lamda = nx.where(LHS > GU, LHS - GU, lamda)  # if LHS > GU, then lambda = LHS - GU
+    # if GL <= LHS <= GU, then lambda = 0 (already set)
+    # Now we have the lambda_i(v) for each time step
+    # Calculate the projection
+    H_norm_sq = sum(nx.sum(H_i**2, axis=tuple(range(1, ndim))) for H_i in Hs) * dx
+    assert H_norm_sq.shape == (T,), "H_norm_sq must be a 1D array of shape (T,)"
+    multiplier = lamda / nx.maximum(H_norm_sq, 1e-12)
+    # --- projection ---------------------------------------------------
+    shape_exp = (-1,) + (1,) * (ndim - 1)
+    exp_mult = multiplier.reshape(shape_exp)
+
+    dest.U = v.U.copy()  # unchanged component
+    dest.V.D = [v_i - exp_mult * H_i for v_i, H_i in zip(v.V.D, Hs[:-1])]
+    dest.V.Z = v.V.Z - exp_mult * Hs[-1]
+
+
 def stepDR(
     w: grids.CSvar, x: grids.CSvar, y: grids.CSvar, z: grids.CSvar, prox1, prox2, alpha
 ):
@@ -1076,6 +1149,40 @@ def stepDR(
     prox2(z, w)
 
     return w, x, y, z
+
+
+def stepPPXA(
+    x: grids.CSvar,
+    ys: List[grids.CSvar],
+    pis: List[grids.CSvar],
+    proxs: List[callable],
+    alpha: float,
+):
+    """Perform one step of the PPXA algorithm for solving the problem
+    min_{x} sum_{i} f_i(x).
+
+    Args:
+        x (array): The current variable to be updated.
+        ys (list of arrays): The list of variables y_i to be updated.
+        pis (list of arrays): The list of proximal outputs pi_i.
+        proxs (list of callable): The proximal operators for each f_i.
+        alpha (float): The step size for the update.
+    """
+    # Step 1: Calculate proximal operators
+    for prox, pi, y in zip(proxs, pis, ys):
+        prox(pi, y)
+
+    # Step 2: Calculate the mean of the proximal outputs
+    p = sum(pis[1:], start=pis[0]) * (1.0 / len(pis))
+
+    # Step 3: Update each variable y with the step size alpha
+    for y, pi in zip(ys, pis):
+        y += alpha * (2 * p - x - pi)
+
+    # Step 4: Update x with the mean of the proximal outputs
+    x += alpha * (p - x)
+
+    return x, ys, pis
 
 
 def computeGeodesic(
@@ -1155,8 +1262,8 @@ def computeGeodesic(
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(
-        y,
-        x,
+        y: grids.CSvar,
+        x: grids.CSvar,
         Q,
         solve=None,
         HQH=None,
@@ -1164,12 +1271,11 @@ def computeGeodesic(
         F=None,
         big_matrix=False,
     ):
-        if HQH is None or H is None or F is None:
+        if H is None or F is None:
             projinterp_(y, x, Q, log)
         else:
             if big_matrix:
                 projinterp_constraint_big_matrix(y, x, solve, H, F, log, periodic)
-                return
             else:
                 projinterp_constraint_(y, x, Q, HQH, H, F, log)
 
@@ -1258,7 +1364,7 @@ def computeGeodesic(
         Clist[i] = z.dist_from_CE()
         Ilist[i] = z.dist_from_interp()
         if H is not None:
-            HFlist[i] = z.dist_from_constraint(H, F)
+            HFlist[i] = sum(z.dist_from_constraint(H, F))
 
     # Final projection and positive density adjustment
     projCE_(
@@ -1272,3 +1378,222 @@ def computeGeodesic(
         print("\nDone.")
 
     return z, (Flist, Clist, Ilist, HFlist)
+
+
+def computeGeodesic_inequality(
+    rho0,
+    rho1,
+    T,
+    ll,
+    H=None,
+    Hs=None,
+    GL=None,
+    GU=None,
+    F=None,
+    p=2.0,
+    q=2.0,
+    delta=1.0,
+    niter=1000,
+    big_matrix=False,
+    periodic=False,
+    eps=10e-3,
+    alpha=None,
+    gamma=None,
+    verbose=False,
+    log=None,
+    init=None,
+    U=None,
+    V=None,
+):
+    """Solve the unbalanced optimal transport problem with source using the Douglas-\
+        Rachford algorithm.
+
+    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
+        length scales ll,
+    the constraint function H, and the right-hand side F, this function computes the \
+        geodesic for the
+    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+
+    Args:
+        rho0 (array): The source density.
+        rho1 (array): The destination density.
+        T (array): The cost matrix.
+        ll (tuple): The length scales of the domain.
+        H (array): The constraint function. If None, the algorithm will solve the \
+            standard optimal transport problem.
+        Hs (list of arrays): The list of H functions for the inequality constraint in the form
+            [H_rho, H_omega0, H_omega1,, ..., H_zeta]. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        GL (array): The lower bound of the constraint. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        F (array): The right-hand side of the constraint. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        p (float): The p-norm for the energy functional.
+        q (float): The q-norm for the energy functional.
+        delta (float): The scaling factor for the grid.
+        niter (int): The number of iterations for the algorithm.
+        eps (float): The tolerance for the Dykstra algorithm.
+        alpha (float): The step size for the Douglas-Rachford algorithm.
+        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
+        verbose (bool): If True, print the progress of the algorithm.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
+        init (str) : The initialization method for the algorithm. If None, the algorithm \
+            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
+            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
+            use the provided U and V as the initialization.
+        U (array): The initial value for U if init='manual'.
+        V (array): The initial value for V if init='manual'.
+
+    Returns:
+        z (CSvar): The optimal transport solution.
+        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
+            continuity equation, and distance from the constraint function at each \
+            iteration. If H and F are None, HFlist is None.
+
+    """
+    assert delta > 0, "Delta must be positive"
+    source = q >= 1.0  # Check if source problem
+
+    nx = get_backend_ext(rho0, rho1)
+
+    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
+        projCE_(
+            y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+        )
+        proxF_(y.V, x.V, gamma, p, q)
+
+    def prox2(
+        y: grids.CSvar,
+        x: grids.CSvar,
+        Q,
+        solve=None,
+        HQH=None,
+        H=None,
+        F=None,
+        big_matrix=False,
+    ):
+        if H is None or F is None:
+            projinterp_(y, x, Q, log)
+        else:
+            if big_matrix:
+                projinterp_constraint_big_matrix(y, x, solve, H, F, log, periodic)
+            else:
+                projinterp_constraint_(y, x, Q, HQH, H, F, log)
+            print(y.dist_from_constraint(H, F))
+
+    def prox3(
+        y: grids.CSvar,
+        x: grids.CSvar,
+        Hs=None,
+        GL=None,
+        GU=None,
+    ):
+        """Project onto the inequality constraint GL <= Hs(x) <= GU."""
+        if Hs is None or GL is None or GU is None:
+            raise ValueError(
+                "Hs, GL, and GU must be provided for inequality constraints."
+            )
+        project_constraint_inequality_single_(y, x, Hs, GL, GU)
+
+    # Adjust mass to match if not a source problem
+    if q < 1.0:
+        if verbose:
+            print("Computing geodesic for standard optimal transport...")
+        rho1 *= nx.sum(rho0) / nx.sum(rho1)
+        delta = 1.0  # Ensure delta is set correctly for non-source problems
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = max(nx.max(rho0), nx.max(rho1)) / 2
+    else:
+        if H is None or F is None:
+            if verbose:
+                print("Computing a geodesic for optimal transport with source...")
+        else:
+            if verbose:
+                print(
+                    "Computing a geodesic for optimal transport with source and constraint... (including inequality constraints)"
+                )
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
+
+    # Initialization
+    ys = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(3)]
+    pis = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(3)]
+    x = sum(ys[1:], start=ys[0]) * (1.0 / len(ys))  # Average of the initial variables
+
+    # Change of variable for scale adjustment
+    for var in [x] + ys + pis:
+        var.dilate_grid(1 / delta)
+        var.rho1 *= delta**rho0.ndim
+        var.rho0 *= delta**rho0.ndim
+
+    # Precompute projection interpolation operators if needed
+    Q = precomputeProjInterp(x.cs, rho0, rho1, periodic)
+    HQH = (
+        precomputeHQH(Q[0], H, x.cs, x.ll)
+        if not big_matrix and (H is not None)
+        else None
+    )
+    PPT = (
+        precomputePPT(H, list(x.cs), x.ll, periodic=periodic)
+        if big_matrix and (H is not None)
+        else None
+    )
+    solve = spsla.factorized(PPT) if PPT is not None else None
+
+    Flist, Clist, Ilist = (
+        nx.zeros(niter, type_as=rho0),
+        nx.zeros(niter, type_as=rho0),
+        nx.zeros(niter, type_as=rho0),
+    )
+    HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
+
+    for i in range(niter):
+        if i % (niter // 100) == 0:
+            if verbose:
+                print(f"\rProgress: {i // (niter // 100)}%", end="")
+
+        x, ys, pis = stepPPXA(
+            x,
+            ys,
+            pis,
+            [
+                lambda y, x: prox1(y, x, source, gamma, p, q, periodic),
+                lambda y, x: prox2(
+                    y,
+                    x,
+                    Q,
+                    solve,
+                    HQH,
+                    H,
+                    F,
+                    big_matrix,
+                ),
+                lambda y, x: prox3(y, x, Hs=Hs, GL=GL, GU=GU),
+            ],
+            alpha,
+        )
+
+        Flist[i] = x.energy(delta, p, q)
+        Clist[i] = x.dist_from_CE()
+        Ilist[i] = x.dist_from_interp()
+        if H is not None:
+            HFlist[i] = sum(x.dist_from_constraint(H, F))
+
+    # Final projection and positive density adjustment
+    projCE_(
+        x.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+    )
+    x.proj_positive()
+    x.dilate_grid(delta)  # Adjust back to original scale
+    x.interp_()  # Final interpolation adjustment
+
+    if verbose:
+        print("\nDone.")
+
+    return x, (Flist, Clist, Ilist, HFlist)

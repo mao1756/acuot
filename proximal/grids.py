@@ -334,10 +334,7 @@ class CSvar:
             )
             for H_i in H
         ]
-        return sum(
-            self.nx.sum(self.nx.abs(HU_i - F_i)) * self.ll[0] / self.cs[0]
-            for HU_i, F_i in zip(HU, F)
-        )
+        return [self.nx.sum(self.nx.abs(HU_i - F_i)) for HU_i, F_i in zip(HU, F)]
 
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
