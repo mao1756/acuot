@@ -1094,9 +1094,9 @@ def project_constraint_inequality_single_(
     if len(GL) != len(GU):
         raise ValueError("GL and GU must have the same length.")
     T = len(GL)  # time steps
-    print(
-        "NaNs in input variable:", [np.isnan(D).any() for D in v.V.D + [v.V.Z]]
-    )  # Check for NaNs in the input variable
+    # print(
+    #    "NaNs in input variable:", [np.isnan(D).any() for D in v.V.D + [v.V.Z]]
+    # )  # Check for NaNs in the input variable
 
     dx = math.prod(v.ll[1:]) / math.prod(v.cs[1:])  # grid spacing
     nx = get_backend_ext(GL, GU, *Hs)
@@ -1112,6 +1112,7 @@ def project_constraint_inequality_single_(
     assert LHS.shape == (
         T,
     ), f"LHS must be a 1D array of shape (T,). We got: {LHS.shape}"
+    print(LHS)
     # LHS is now a 1D array of shape (T,)
     lamda = nx.zeros(T, type_as=GL)
     lamda = nx.where(LHS < GL, LHS - GL, lamda)  # if LHS < GL, then lambda = LHS - GL
