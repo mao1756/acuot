@@ -1199,7 +1199,6 @@ def computeGeodesic(
     niter=1000,
     big_matrix=False,
     periodic=False,
-    eps=10e-3,
     alpha=None,
     gamma=None,
     verbose=False,
