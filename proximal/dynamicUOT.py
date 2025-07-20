@@ -1112,7 +1112,6 @@ def project_constraint_inequality_single_(
     assert LHS.shape == (
         T,
     ), f"LHS must be a 1D array of shape (T,). We got: {LHS.shape}"
-    print(LHS)
     # LHS is now a 1D array of shape (T,)
     lamda = nx.zeros(T, type_as=GL)
     lamda = nx.where(LHS < GL, LHS - GL, lamda)  # if LHS < GL, then lambda = LHS - GL
