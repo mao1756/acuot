@@ -1,11 +1,14 @@
 # Results of the experiments
 Here, we record the results of our experiments so far. For the information about the repository, see below.
 
+The `exploratory` directory contains Jupyter notebooks used during development. These are organized by the type of constraint studied—`unconstrained`, `total_mass`, `inequality`, `barrier`, and `convex_sets`—with older experiments stored under `exploratory/old`.
+
 ## Overall results for the proximal algorithm
 | Constraint        | Status    |            Note                 |   Folder            |
 |-------------------|-----------|-------------------------------- |--------------------------------|
 | Unconstrained     | Success   | Recreation of Chizat et al. (2018) and more |[link](exploratory/proximal/unconstrained) | 
 | Total Mass        | Success   | SHK distance is covered here    | [link](exploratory/proximal/total_mass) |
+| Inequality        | Success   | Basic inequality constraints    | [link](exploratory/proximal/inequality) |
 | Barrier           | Partial   | Moving barrier is more unstable | [link](exploratory/proximal/barrier) |
 | Convex Sets       | N/A       | Not implemented yet             | [link](exploratory/proximal/convex_sets) |
 
@@ -31,6 +34,14 @@ Here, we record the results of our experiments so far. For the information about
 | Shrink and enlarge the same distribution    | Success   |   | [link](exploratory/proximal/total_mass/[WORKS]shrink_enlarge_same_dist.ipynb) |
 | Ours vs Jing et al. | Partial | Larger domain induces instability | [link](exploratory/proximal/total_mass/[PARTIAL]SHK_ours_vs_jing_gaussian.ipynb) |
 | ESI presentation | Partial | Moving Barrier is unstable | [link](exploratory/proximal/total_mass/[PARTIAL]ESI_presentation.ipynb) |
+
+### Inequality constraint
+
+| Experiment        | Status  | Note | Folder |
+|-------------------|---------|------|--------|
+| Inequality test   | Success | Density threshold constraint | [link](exploratory/proximal/inequality/[WORKS]inequality_test.ipynb) |
+| Local inequality constraints | Success | Local density threshold constraint | [link](exploratory/proximal/inequality/[WORKS]local_inequality_constraints.ipynb) |
+| Momentum constraint | Success | Momentum threshold constraint | [link](exploratory/proximal/inequality/[WORKS]momentum_constraint.ipynb) |
 
 ### Barrier Constraint
 
