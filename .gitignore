@@ -402,3 +402,5 @@ FodyWeavers.xsd
 
 # Vscode
 **/.vscode/
+exploratory/proximal/total_mass/data/input/base-pop-historiques-1876-2020.xlsx
+exploratory/proximal/total_mass/data/input/ADE_4-0_GPKG_WGS84G_FRA-ED2025-08-15.gpkg
