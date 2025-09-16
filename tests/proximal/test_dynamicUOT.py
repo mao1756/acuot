@@ -2240,3 +2240,36 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(z.U.D[0], np.ones((T + 1, 3)))
         np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
         np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))
+
+    def test_computGeodesic_numpy_total_mass(self):
+        # Define the initial and the terminal distributions
+        K = 256
+        # Generate the initial and terminal distributions
+        X = np.linspace(0, 1, K)  # Discretization of the time-space domain
+        rho_0 = np.exp(
+            -0.5 * (X - 0.5) ** 2 / (0.05**2)
+        )  # generate_gaussian_mixture(1, 1.0, K, sigma=0.02, dimension=1)
+        rho_1 = 0.25 * np.exp(-0.5 * (X - 0.15) ** 2 / (0.05**2)) + 0.75 * np.exp(
+            -0.5 * (X - 0.85) ** 2 / (0.05**2)
+        )
+        rho_0 /= (
+            np.sum(rho_0) / 256
+        )  # Normalize to make it a density. Our algorithm assumes everything is a density.
+        rho_1 /= (
+            np.sum(rho_1) / 256
+        )  # Normalize to make it a density. Our algorithm assumes everything is a density.
+
+        T = 15
+        Hs = [np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]
+        GL = np.ones(T)
+        GU = np.ones(T)
+        z, lists = dyn.computeGeodesic_inequality(
+            rho_0, rho_1, T, (1.0, 1.0), Hs=Hs, GL=GL, GU=GU, niter=10000
+        )
+        data = np.load("tests/proximal/test_cases/SHK_1D_solution.npz")
+        np.testing.assert_allclose(z.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(z.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(z.U.Z, data["U_Z"])
+        np.testing.assert_allclose(z.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.Z, data["V_Z"])

@@ -1185,7 +1185,7 @@ def stepPPXA(
     return x, ys, pis
 
 
-def computeGeodesic(
+def computeGeodesic_old(
     rho0,
     rho1,
     T,
@@ -1596,3 +1596,183 @@ def computeGeodesic_inequality(
         print("\nDone.")
 
     return x, (Flist, Clist, Ilist, HFlist)
+
+
+def computeGeodesic(
+    rho0,
+    rho1,
+    T,
+    ll,
+    H=None,
+    GL=None,
+    GU=None,
+    p=2.0,
+    q=2.0,
+    delta=1.0,
+    niter=1000,
+    big_matrix=False,
+    periodic=False,
+    alpha=None,
+    gamma=None,
+    verbose=False,
+    log=None,
+    init=None,
+    U=None,
+    V=None,
+):
+    """Solve the unbalanced optimal transport problem with source using the Douglas-\
+        Rachford algorithm.
+
+    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
+        length scales ll,
+    the constraint function H, and the right-hand side F, this function computes the \
+        geodesic for the
+    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+
+    Args:
+        rho0 (array): The source density.
+        rho1 (array): The destination density.
+        T (array): The cost matrix.
+        ll (tuple): The length scales of the domain.
+        H (list of list of arrays): The list of lists of H functions for the inequality constraint in the form
+            [H_rho, H_omega0, H_omega1,, ..., H_zeta]. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        GL (list of array): The lower bounds of the constraint. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        GU (list of array): The upper bounds of the constraint. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        p (float): The p-norm for the energy functional.
+        q (float): The q-norm for the energy functional.
+        delta (float): The scaling factor for the grid.
+        niter (int): The number of iterations for the algorithm.
+        eps (float): The tolerance for the Dykstra algorithm.
+        alpha (float): The step size for the Douglas-Rachford algorithm.
+        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
+        verbose (bool): If True, print the progress of the algorithm.
+        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
+            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
+            'first_order_condition' and the values are lists to store the norms.
+        init (str) : The initialization method for the algorithm. If None, the algorithm \
+            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
+            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
+            use the provided U and V as the initialization.
+        U (array): The initial value for U if init='manual'.
+        V (array): The initial value for V if init='manual'.
+
+    Returns:
+        z (CSvar): The optimal transport solution.
+        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
+            continuity equation, and distance from the constraint function at each \
+            iteration. If H and F are None, HFlist is None.
+
+    """
+    assert delta > 0, "Delta must be positive"
+    source = q >= 1.0  # Check if source problem
+
+    nx = get_backend_ext(rho0, rho1)
+
+    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
+        projCE_(
+            y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+        )
+        proxF_(y.V, x.V, gamma, p, q)
+
+    def prox2(
+        y: grids.CSvar,
+        x: grids.CSvar,
+        Q,
+    ):
+        projinterp_(y, x, Q, log)
+
+    # Define the list of proximal operators
+    proxs = [
+        (lambda pi, y: prox1(pi, y, source, gamma, p, q, periodic)),
+        (lambda pi, y: prox2(pi, y, Q)),
+    ]
+    if H is not None or GL is not None or GU is not None:
+        if not (isinstance(H, list) and isinstance(GL, list) and isinstance(GU, list)):
+            raise ValueError("H, GL, and GU must be lists.")
+        if not (len(H) == len(GL) == len(GU)):
+            raise ValueError("H, GL, and GU must have the same length.")
+        for Hj, GLj, GUj in zip(H, GL, GU):
+            proxs.append(
+                (
+                    lambda pi, y, Hj=Hj, GLj=GLj, GUj=GUj: project_constraint_inequality_single_(
+                        pi, y, Hj, GLj, GUj
+                    )
+                )
+            )
+
+    # Adjust mass to match if not a source problem
+    if q < 1.0:
+        if verbose:
+            print("Computing geodesic for standard optimal transport...")
+        rho1 *= nx.sum(rho0) / nx.sum(rho1)
+        delta = 1.0  # Ensure delta is set correctly for non-source problems
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = max(nx.max(rho0), nx.max(rho1)) / 2
+    else:
+        if H is None or GL is None or GU is None:
+            if verbose:
+                print("Computing a geodesic for optimal transport with source...")
+        else:
+            if verbose:
+                print(
+                    "Computing a geodesic for optimal transport with source and constraint... (including inequality constraints)"
+                )
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
+
+    # Initialization
+    n_constraints = len(H) if H is not None else 0
+    K = 2 + n_constraints  # Number of proximal operators
+    ys = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
+    pis = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
+    x = sum(ys[1:], start=ys[0]) * (1.0 / len(ys))  # Average of the initial variables
+
+    # Change of variable for scale adjustment
+    for var in [x] + ys + pis:
+        var.dilate_grid(1 / delta)
+        var.rho1 *= delta**rho0.ndim
+        var.rho0 *= delta**rho0.ndim
+
+    # Precompute projection interpolation operators if needed
+    Q = precomputeProjInterp(x.cs, rho0, rho1, periodic)
+    Flist, Clist, Ilist = (
+        nx.zeros(niter, type_as=rho0),
+        nx.zeros(niter, type_as=rho0),
+        nx.zeros(niter, type_as=rho0),
+    )
+
+    for i in range(niter):
+        if i % (niter // 100) == 0:
+            if verbose:
+                print(f"\rProgress: {i // (niter // 100)}%", end="")
+        x, ys, pis = stepPPXA(
+            x,
+            ys,
+            pis,
+            proxs,
+            alpha,
+        )
+
+        Flist[i] = x.energy(delta, p, q)
+        Clist[i] = x.dist_from_CE()
+        Ilist[i] = x.dist_from_interp()
+
+    # Final projection and positive density adjustment
+    projCE_(
+        x.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
+    )
+    x.proj_positive()
+    x.dilate_grid(delta)  # Adjust back to original scale
+    x.interp_()  # Final interpolation adjustment
+
+    if verbose:
+        print("\nDone.")
+
+    return x, (Flist, Clist, Ilist)
