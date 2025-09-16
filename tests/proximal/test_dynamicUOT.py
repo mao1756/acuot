@@ -2475,3 +2475,169 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(x.V.D[1], data["V_D1"])
         np.testing.assert_allclose(x.V.D[2], data["V_D2"])
         np.testing.assert_allclose(x.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_ain(self):
+        inputs = np.load("tests/proximal/test_cases/ain-inputs.npz")
+        rho_0 = inputs["rho_0"]
+        rho_1 = inputs["rho_1"]
+        H1 = inputs["H1"]
+        H2 = inputs["H2"]
+        F1 = inputs["F1"]
+        F2 = inputs["F2"]
+        T = inputs["T"].item()
+        ll = tuple(inputs["ll"])
+        niter = inputs["niter"].item()
+        N = rho_0.shape[0]
+        H = [
+            [H1, np.zeros((T, N, N)), np.zeros((T, N, N)), np.zeros((T, N, N))],
+            [H2, np.zeros((T, N, N)), np.zeros((T, N, N)), np.zeros((T, N, N))],
+        ]
+        GL = [F1, F2]
+        GU = [F1, F2]
+        z, lists = dyn.computeGeodesic(
+            rho_0, rho_1, T, ll, H=H, GL=GL, GU=GU, niter=niter, delta=1.0
+        )
+        data = np.load("tests/proximal/test_cases/ain.npz")
+        np.testing.assert_allclose(z.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(z.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(z.U.D[2], data["U_D2"])
+        np.testing.assert_allclose(z.U.Z, data["U_Z"])
+        np.testing.assert_allclose(z.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.D[2], data["V_D2"])
+        np.testing.assert_allclose(z.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_curve_symmetric(self):
+
+        def wrap(x):
+            return (x + np.pi) % (2 * np.pi) - np.pi
+
+        def gaussian_on_circle(t, mu, sigma):
+            return np.exp(-0.5 * wrap(t - mu) ** 2 / sigma**2)
+
+        def rho_two_bumps(theta, mu=0.0, sigma=0.25):
+            g1 = gaussian_on_circle(theta, mu, sigma)
+            g2 = gaussian_on_circle(theta, mu + np.pi, sigma)
+            return g1 + g2
+
+        def normalize_density(rho, desired_mass=1.0):
+            dx = 2 * np.pi / rho.size
+            return rho / (rho.sum() * dx) * desired_mass
+
+        def make_HF(theta, T):
+            H = [
+                np.tile(np.cos(theta), (T, 1)),  # (T, K)
+                np.tile(np.sin(theta), (T, 1)),
+            ]
+            F = [np.zeros(T), np.zeros(T)]
+            return H, F
+
+        sigma = 0.2
+        T = 15
+        K = 256
+        ll = (1.0, 2 * np.pi)
+        theta_grid = np.linspace(0.0, 2 * np.pi, K, endpoint=False)
+
+        rho_0 = rho_two_bumps(theta_grid, mu=0.0, sigma=sigma)
+        rho_1 = (
+            gaussian_on_circle(theta_grid, mu=np.pi / 4, sigma=sigma)
+            + gaussian_on_circle(theta_grid, mu=3 * np.pi / 4, sigma=sigma)
+            + gaussian_on_circle(theta_grid, mu=5 * np.pi / 4, sigma=sigma)
+            + gaussian_on_circle(theta_grid, mu=7 * np.pi / 4, sigma=sigma)
+        )
+
+        rho_0 = normalize_density(rho_0, desired_mass=1.0)
+        rho_1 = normalize_density(rho_1, desired_mass=2.0)
+        H, F = make_HF(theta_grid, T)
+        H = [
+            [H[0], np.zeros((T, K)), np.zeros((T, K))],
+            [H[1], np.zeros((T, K)), np.zeros((T, K))],
+        ]
+        GL = F
+        GU = F
+        z, lists = dyn.computeGeodesic(
+            rho_0,
+            rho_1,
+            T,
+            ll,
+            H=H,
+            GL=GL,
+            GU=GU,
+            niter=10000,
+            delta=0.01,
+            periodic=True,
+        )
+        data = np.load("tests/proximal/test_cases/convex-curve-symmetric.npz")
+        np.testing.assert_allclose(z.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(z.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(z.U.Z, data["U_Z"])
+        np.testing.assert_allclose(z.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_curve_unsymmetric(self):
+
+        def wrap(x):
+            return (x + np.pi) % (2 * np.pi) - np.pi
+
+        def gaussian_on_circle(t, mu, sigma):
+            return np.exp(-0.5 * wrap(t - mu) ** 2 / sigma**2)
+
+        def rho_two_bumps(theta, mu=0.0, sigma=0.25):
+            g1 = gaussian_on_circle(theta, mu, sigma)
+            g2 = gaussian_on_circle(theta, mu + np.pi, sigma)
+            return g1 + g2
+
+        def normalize_density(rho, desired_mass=1.0):
+            dx = 2 * np.pi / rho.size
+            return rho / (rho.sum() * dx) * desired_mass
+
+        def make_HF(theta, T):
+            H = [
+                np.tile(np.cos(theta), (T, 1)),  # (T, K)
+                np.tile(np.sin(theta), (T, 1)),
+            ]
+            F = [np.zeros(T), np.zeros(T)]
+            return H, F
+
+        sigma = 0.2
+        T = 15
+        K = 256
+        ll = (1.0, 2 * np.pi)
+        theta_grid = np.linspace(0.0, 2 * np.pi, K, endpoint=False)
+
+        rho_0 = rho_two_bumps(theta_grid, mu=0.0, sigma=sigma)
+        rho_1 = (
+            gaussian_on_circle(theta_grid, mu=0, sigma=sigma)
+            + gaussian_on_circle(theta_grid, mu=2 * np.pi / 3, sigma=sigma)
+            + gaussian_on_circle(theta_grid, mu=4 * np.pi / 3, sigma=sigma)
+        )
+
+        rho_0 = normalize_density(rho_0, desired_mass=1.0)
+        rho_1 = normalize_density(rho_1, desired_mass=2.0)
+        H, F = make_HF(theta_grid, T)
+        H = [
+            [H[0], np.zeros((T, K)), np.zeros((T, K))],
+            [H[1], np.zeros((T, K)), np.zeros((T, K))],
+        ]
+        GL = F
+        GU = F
+        z, lists = dyn.computeGeodesic(
+            rho_0,
+            rho_1,
+            T,
+            ll,
+            H=H,
+            GL=GL,
+            GU=GU,
+            niter=10000,
+            delta=0.01,
+            periodic=True,
+        )
+        data = np.load("tests/proximal/test_cases/convex-curve-unsymmetric.npz")
+        np.testing.assert_allclose(z.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(z.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(z.U.Z, data["U_Z"])
+        np.testing.assert_allclose(z.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.Z, data["V_Z"])

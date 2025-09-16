@@ -347,7 +347,14 @@ class CSvar:
         assert self.cs == other.cs
         assert self.ll == other.ll
         place_holder = CSvar(
-            self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
+            self.rho0,
+            self.rho1,
+            self.cs[0],
+            self.ll,
+            "manual",
+            self.U,
+            self.V,
+            self.periodic,
         )
         place_holder.U += other.U
         place_holder.V += other.V
@@ -367,7 +374,14 @@ class CSvar:
         assert self.ll == other.ll
         assert isinstance(self.U, Svar)
         place_holder = CSvar(
-            self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
+            self.rho0,
+            self.rho1,
+            self.cs[0],
+            self.ll,
+            "manual",
+            self.U,
+            self.V,
+            self.periodic,
         )
         place_holder.U = self.U - other.U
         place_holder.V = self.V - other.V
@@ -377,7 +391,14 @@ class CSvar:
         """Multiply a variable by a scalar."""
         if isinstance(other, (int, float)):
             place_holder = CSvar(
-                self.rho0, self.rho1, self.cs[0], self.ll, "manual", self.U, self.V
+                self.rho0,
+                self.rho1,
+                self.cs[0],
+                self.ll,
+                "manual",
+                self.U,
+                self.V,
+                self.periodic,
             )
             place_holder.U = self.U * other
             place_holder.V = self.V * other
