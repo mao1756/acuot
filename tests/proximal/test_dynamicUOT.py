@@ -2341,3 +2341,137 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(z.V.D[1], data["V_D1"])
         np.testing.assert_allclose(z.V.D[2], data["V_D2"])
         np.testing.assert_allclose(z.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_barrier_static(self):
+        from PIL import Image
+
+        def image_to_numpy(image_path):
+            # Load the image file
+            image = Image.open(image_path).convert(
+                "L"
+            )  # Convert image to grayscale if it's not
+
+            # Convert the PIL image to a numpy array
+            image_array = np.array(image)
+
+            return image_array
+
+        maze = 1 - image_to_numpy("tests/proximal/test_cases/maze.png").squeeze() / 255
+        T = 30
+        N1 = maze.shape[0]
+        N2 = maze.shape[1]
+
+        H = [
+            [
+                np.repeat(maze[np.newaxis, :, :], T, axis=0),
+                np.zeros((T, N1, N2)),
+                np.zeros((T, N1, N2)),
+                np.zeros((T, N1, N2)),
+            ]
+        ]
+        GL = [np.zeros(T)]
+        GU = [np.zeros(T)]
+
+        indices = np.arange(0, 30) * 1.0 / 30
+        xx, yy = np.meshgrid(indices, indices)
+
+        rho_0_1 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1), mean=[5.0 / 30.0, 5.0 / 30.0], cov=2.0 / 36**2
+        )
+        rho_1_1 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1),
+            mean=[24.0 / 30.0, 24.0 / 30.0],
+            cov=2.0 / 36**2,
+        )
+        ll = (1.0, 1.0, 1.0)
+        x_1, lists = dyn.computeGeodesic(
+            rho_0_1, rho_1_1, T, ll, H=H, GL=GL, GU=GU, delta=10.0, niter=7000
+        )
+        data = np.load("tests/proximal/test_cases/barrier-static.npz")
+        np.testing.assert_allclose(x_1.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(x_1.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(x_1.U.D[2], data["U_D2"])
+        np.testing.assert_allclose(x_1.U.Z, data["U_Z"])
+        np.testing.assert_allclose(x_1.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(x_1.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(x_1.V.D[2], data["V_D2"])
+        np.testing.assert_allclose(x_1.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_barrier_moving(self):
+        from PIL import Image
+
+        def image_to_numpy(image_path):
+            # Load the image file
+            image = Image.open(image_path).convert(
+                "L"
+            )  # Convert image to grayscale if it's not
+
+            # Convert the PIL image to a numpy array
+            image_array = np.array(image)
+
+            return image_array
+
+        def fill_region(frames, fps, speed, original, Hstep):
+            rows, cols = 30, 30
+            step_size = speed * 14 / fps
+
+            # Define the region to fill
+            start_col, end_col = 1, 14
+
+            # Create a list to store each frame
+            filled_frames = [original]
+
+            for i in range(1, frames):
+                frame = filled_frames[-1].copy()
+                # Determine the slice to fill based on speed
+                end_fill = max(1, int(end_col - i * step_size))
+                frame[18:20, end_fill:14] += Hstep
+                # if above 1, clip to 1
+                frame[frame > 1] = 1
+
+                # Append the current state of the array to the list
+                filled_frames.append(frame.copy())
+
+            return filled_frames
+
+        maze = 1 - image_to_numpy("tests/proximal/test_cases/maze.png").squeeze() / 255
+        T = 30
+        N1 = maze.shape[0]
+        N2 = maze.shape[1]
+        frames = fill_region(T, 30, 1.0, maze, Hstep=1.0)
+        barrier = np.stack(frames, axis=0)
+        H = [
+            [
+                barrier,
+                np.zeros((T, N1, N2)),
+                np.zeros((T, N1, N2)),
+                np.zeros((T, N1, N2)),
+            ]
+        ]
+        GL = [np.zeros(T)]
+        GU = [np.zeros(T)]
+
+        indices = np.arange(0, 30) * 1.0 / 30
+        xx, yy = np.meshgrid(indices, indices)
+
+        rho_0_1 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1), mean=[5.0 / 30.0, 5.0 / 30.0], cov=2.0 / 36**2
+        )
+        rho_1_1 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1),
+            mean=[24.0 / 30.0, 24.0 / 30.0],
+            cov=2.0 / 36**2,
+        )
+        ll = (1.0, 1.0, 1.0)
+        x, lists = dyn.computeGeodesic(
+            rho_0_1, rho_1_1, T, ll, H=H, GL=GL, GU=GU, delta=10.0, niter=7000
+        )
+        data = np.load("tests/proximal/test_cases/barrier-moving.npz")
+        np.testing.assert_allclose(x.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(x.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(x.U.D[2], data["U_D2"])
+        np.testing.assert_allclose(x.U.Z, data["U_Z"])
+        np.testing.assert_allclose(x.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(x.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(x.V.D[2], data["V_D2"])
+        np.testing.assert_allclose(x.V.Z, data["V_Z"])
