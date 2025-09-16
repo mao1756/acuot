@@ -2241,35 +2241,103 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
         np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))
 
-    def test_computGeodesic_numpy_total_mass(self):
+    def test_computeGeodesic_numpy_shk(self):
         # Define the initial and the terminal distributions
+        T = 15
         K = 256
         # Generate the initial and terminal distributions
         X = np.linspace(0, 1, K)  # Discretization of the time-space domain
-        rho_0 = np.exp(
-            -0.5 * (X - 0.5) ** 2 / (0.05**2)
-        )  # generate_gaussian_mixture(1, 1.0, K, sigma=0.02, dimension=1)
+        rho_0 = np.exp(-0.5 * (X - 0.5) ** 2 / (0.05**2))
         rho_1 = 0.25 * np.exp(-0.5 * (X - 0.15) ** 2 / (0.05**2)) + 0.75 * np.exp(
             -0.5 * (X - 0.85) ** 2 / (0.05**2)
         )
         rho_0 /= (
             np.sum(rho_0) / 256
         )  # Normalize to make it a density. Our algorithm assumes everything is a density.
-        rho_1 /= (
-            np.sum(rho_1) / 256
-        )  # Normalize to make it a density. Our algorithm assumes everything is a density.
+        rho_1 /= np.sum(rho_1) / 256
 
-        T = 15
-        Hs = [np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]
-        GL = np.ones(T)
-        GU = np.ones(T)
-        z, lists = dyn.computeGeodesic_inequality(
-            rho_0, rho_1, T, (1.0, 1.0), Hs=Hs, GL=GL, GU=GU, niter=10000
+        # Calculate the constrained geodesic
+        H = [[np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]]
+        GL = [np.ones(T)]
+        GU = [np.ones(T)]
+        z, lists = dyn.computeGeodesic(
+            rho_0, rho_1, T, (1.0, 1.0), H=H, GL=GL, GU=GU, niter=10000
         )
-        data = np.load("tests/proximal/test_cases/SHK_1D_solution.npz")
+        data = np.load("tests/proximal/test_cases/shk.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.Z, data["U_Z"])
         np.testing.assert_allclose(z.V.D[0], data["V_D0"])
         np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_total_mass_inequality(self):
+        def gauss(x, x_0, sigma, mass):
+            # Gaussian bump
+            normalized_factor = np.exp(-((x - x_0) ** 2) / sigma**2)
+            return mass * (normalized_factor * K / np.sum(normalized_factor))
+
+        sigma = 0.05
+        K = 256
+        X = np.linspace(0, 1, K)  # Discretization of the space domain
+
+        # Define the initial and the terminal distributions
+        rho_0 = gauss(X, 0.25, sigma, 1)  # Initial density
+        rho_1 = gauss(X, 0.75, sigma, 1)  # Final density
+
+        # Normalizing densities
+        rho_0 /= np.sum(rho_0) / 256  # make sure the total mass is 1
+        rho_1 /= np.sum(rho_1) / 256
+
+        T = 15  # number of time steps
+        ll = (1.0, 1.0)  # the length of each dimension
+        delta = 0.5 / np.pi
+
+        # Mass greater than 0.8
+        H = [[np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]]
+        GL = [0.8 * np.ones((T,))]
+        GU = [np.inf * np.ones((T,))]
+        x, lists = dyn.computeGeodesic(
+            rho_0, rho_1, T, ll, H=H, GL=GL, GU=GU, delta=delta, niter=3000
+        )
+        data = np.load("tests/proximal/test_cases/total-mass-inequality-le0.8.npz")
+        np.testing.assert_allclose(x.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(x.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(x.U.Z, data["U_Z"])
+        np.testing.assert_allclose(x.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(x.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(x.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_2d_total_mass(self):
+        K = 30
+        T = 15
+        delta = 1.0
+        rho_0 = np.load("tests/proximal/test_cases/2D-total-mass-rho0.npy")
+        rho_1 = np.load("tests/proximal/test_cases/2D-total-mass-rho1.npy")
+
+        # Calculate the constrained geodesic
+        t = np.array([(i + 0.5) / T for i in range(T)])
+        F = 3 - 8 * (t - 0.5) ** 2
+        GL = [F]
+        GU = [F]
+        H = [
+            [
+                np.ones((T, K, K)),
+                np.zeros((T, K, K)),
+                np.zeros((T, K, K)),
+                np.zeros((T, K, K)),
+            ]
+        ]
+
+        z, lists = dyn.computeGeodesic(
+            rho_0, rho_1, T, (1.0, 1.0, 1.0), H=H, GL=GL, GU=GU, niter=3000, delta=delta
+        )
+        data = np.load("tests/proximal/test_cases/2D-total-mass.npz")
+        np.testing.assert_allclose(z.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(z.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(z.U.D[2], data["U_D2"])
+        np.testing.assert_allclose(z.U.Z, data["U_Z"])
+        np.testing.assert_allclose(z.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(z.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(z.V.D[2], data["V_D2"])
         np.testing.assert_allclose(z.V.Z, data["V_Z"])
