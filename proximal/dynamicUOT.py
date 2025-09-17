@@ -1,3 +1,13 @@
+"""Algorithms for dynamic unbalanced optimal transport solvers.
+
+This module collects the proximal operators, Poisson solvers, projection
+utilities, and Douglas-Rachford/PPXA schemes that power the dynamic
+unbalanced optimal transport (UOT) routines in :mod:`proximal`.  The
+implementations operate on the grid objects defined in :mod:`proximal.grids`
+and are backend agnostic thanks to the :mod:`ot.backend` abstraction, so they
+work with both NumPy- and torch-based pipelines.
+"""
+
 import proximal.grids as grids
 from proximal.backend_extension import get_backend_ext
 from proximal.backend_extension import NumpyBackend_ext, TorchBackend_ext
@@ -11,16 +21,22 @@ from typing import List
 
 
 def root(a, b, c, d, nx: Backend):
-    """Compute the largest real root of a cubic polynomial ax^3 + bx^2 + cx + d.
-    If a, b, c, and d are arrays, the function computes the root elementwise.
+    """Return the largest real root of the cubic ``a x^3 + b x^2 + c x + d``.
+
+    All coefficients are broadcast elementwise, so vector inputs yield the
+    elementwise largest real root.  Complex intermediate values are handled via
+    the ``nx`` backend, allowing NumPy- or torch-based execution.
 
     Args:
-        a (array): The coefficient of x^3.
-        b (array): The coefficient of x^2.
-        c (array): The coefficient of x.
-        d (array): The constant term.
-        nx (module): The backend module used for computation such as numpy or torch.
+        a (array-like): Coefficient multiplying ``x**3`` (must be non-zero).
+        b (array-like): Coefficient multiplying ``x**2``.
+        c (array-like): Coefficient multiplying ``x``.
+        d (array-like): Constant term.
+        nx (Backend): Numerical backend (e.g. NumPy or torch) that supplies the
+            primitive operations.
 
+    Returns:
+        array-like: Largest real root for each entry in the broadcast inputs.
     """
     assert (
         a.shape == b.shape == c.shape == d.shape
@@ -52,18 +68,22 @@ def root(a, b, c, d, nx: Backend):
 
 
 def mdl(M, nx: Backend):
-    """Given a list of arrays of the same shape, return the elementwise L2 norm."""
+    """Return the pointwise Euclidean norm of a list of aligned arrays."""
     return nx.sqrt(sum(m**2 for m in M))
 
 
-def proxA_(dest: grids.Cvar, M, gamma):
-    """In-place calculation of proximal operator for sum abs (M_i)
+def proxA_(dest: grids.Cvar, M, gamma: float):
+    """Project a stacked flux ``M`` onto the scaled L2 ball.
 
-    I think this is actually calculating the proximal operator for the L2 norm
-    i.e. sum abs(M_i)^2
+    The routine applies the proximal operator of ``gamma * ||M||_2`` by applying a
+    soft-thresholding factor to each component and writing the result into
+    ``dest`` in place.
 
-    As this operator does not affect WFR, I keep it as it is for now.
-
+    Args:
+        dest (grids.Cvar): Destination container receiving the projected fluxes.
+        M (Sequence[array-like]): Sequence of flux components with identical
+            shapes.
+        gamma (float): Step size for the proximal operator.
     """
     softth = dest.nx.maximum(1 - gamma / mdl(M, dest.nx), 0.0)
     for k in range(len(M)):
@@ -71,7 +91,27 @@ def proxA_(dest: grids.Cvar, M, gamma):
 
 
 def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
-    """In-place calculation of proximal operator for sum |M_i|^2/R_i."""
+    r"""Compute the proximal map of ``sum |M_i|^2 / R`` under positivity constraints.
+
+    The update solves
+
+    .. math::
+        \operatorname{prox}_{\gamma}(R, M)
+            = \arg\min_{\tilde R, \tilde M}
+              \tfrac{1}{2}\|\tilde R - R\|_2^2 + \tfrac{1}{2}\sum_i\|\tilde M_i - M_i\|_2^2
+              + \gamma \sum_i \frac{\|\tilde M_i\|_2^2}{\tilde R}
+
+    subject to ``\tilde R >= 0``.  The result is written into ``destR`` and
+    ``destM`` in place.
+
+    Args:
+        destR (array-like): Output buffer for the updated mass term ``R``.
+        destM (Sequence[array-like]): Output buffers for the associated fluxes.
+        R (array-like): Current mass iterate.
+        M (Sequence[array-like]): Current flux iterates.
+        gamma (float): Proximal step size.
+        nx (Backend): Numerical backend providing linear-algebra primitives.
+    """
     a = nx.ones(R.shape, type_as=R)
     b = 2 * gamma - R
     c = gamma**2 - 2 * gamma * R
@@ -84,7 +124,21 @@ def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
 
 
 def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
-    "Return prox_F(V) where F is the energy functional and V on centered grid"
+    """Evaluate the proximal map of the energy functional ``F``.
+
+    The centred-grid variable ``V`` stores density and momentum terms whose
+    proximal update depends on the choice of ``(p, q)`` combination.  The helper
+    dispatches to the appropriate proximal operator (``proxA_``/``proxB_``)
+    depending on whether the problem corresponds to classical Wasserstein (W1,
+    W2), Wasserstein-Fisher-Rao (WFR), or their mixed variants.
+
+    Args:
+        dest (grids.Cvar): Output container updated in place.
+        V (grids.Cvar): Input centred-grid variable.
+        gamma (float): Proximal step size.
+        p (float): Lp exponent that selects the transport norm (1 or 2).
+        q (float): Lq exponent controlling the source term (<= 2).
+    """
     if p == 1 and q < 1:  # W1
         dest.D[0][:] = V.D[0]
         proxA_(dest.D[1:], V.D[1:], gamma)
@@ -114,15 +168,20 @@ def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
 
 
 def poisson_(f, ll, source, nx: Backend):
-    """Solve Δu+f=0(source=False) or Δu-u+f=0 on the centered grid.
-    The BC is Neumann BC defined on the staggered grid.
+    """Solve a Poisson problem or its screened variant with Neumann boundary data.
 
-    f will be overwritten with the solution in-place.
+    The centred-grid array ``f`` is overwritten with the solution of
+
+    - ``Delta u + f = 0`` when ``source`` is ``False``
+    - ``(Delta - 1) u + f = 0`` when ``source`` is ``True``
+
+    using separable discrete cosine transforms (DCT-II) along each axis.
 
     Args:
-        f (array): The function f on the centered grid.
-        ll (tuple): The length scales of the domain.
-        source (bool): True if source problem.
+        f (array-like): Right-hand side on the centred grid (modified in place).
+        ll (tuple[float, ...]): Physical lengths of each domain axis.
+        source (bool): Whether to include the ``-u`` source term.
+        nx (Backend): Numerical backend providing DCT and linear-algebra ops.
     """
     d = f.ndim
     N = f.shape
@@ -155,20 +214,20 @@ def poisson_(f, ll, source, nx: Backend):
 
 
 def poisson_mixed_bc_(f, ll, source, nx, periodic_axes=None):
-    """
-    Solve (Δu) + f = 0   or   (Δ - 1)u + f = 0  on a Cartesian grid where
-    axis 0  : Neumann BC  (time)      → DCT-II
-    axes in `periodic_axes` : periodic BC (space) → complex FFT.
+    """Solve a Poisson problem with mixed Neumann/periodic boundary conditions.
 
-    The solution overwrites `f` in-place (like your original routine).
+    Axis 0 is treated with Neumann conditions using a DCT-II transform, while
+    the axes listed in ``periodic_axes`` use FFTs.  The routine overwrites
+    ``f`` with the solution of ``Delta u + f = 0`` (or ``(Delta - 1)u + f = 0`` when
+    ``source`` is ``True``).
 
-    Args
-    ----
-    f : ndarray      right-hand side (will be overwritten by the solution)
-    ll : tuple(float) physical lengths of each axis
-    source : bool    if True solve (Δ-1)u = -f, else Δu = -f
-    nx : module      numerical backend (NumPy, JAX, torch, cupy, …)
-    periodic_axes : iterable of ints, default (1,…,d-1)
+    Args:
+        f (array-like): Right-hand side on the centred grid (modified in place).
+        ll (tuple[float, ...]): Physical lengths of each axis.
+        source (bool): Whether to include the ``-u`` term (Helmholtz case).
+        nx (Backend): Numerical backend providing FFT/DCT implementations.
+        periodic_axes (Iterable[int], optional): Indices of periodic axes; any
+            axis not listed is treated with Neumann boundary conditions.
     """
     d = f.ndim
     if periodic_axes is None:
@@ -176,7 +235,7 @@ def poisson_mixed_bc_(f, ll, source, nx, periodic_axes=None):
     N = f.shape
     h = [L / n for L, n in zip(ll, N)]
 
-    # --- build the diagonal Λ(k0,…,kd-1) -----------------------------
+    # --- build the diagonal Lambda(k0,...,kd-1) -----------------------
     D = nx.zeros(f.shape, type_as=f)
     for ax in range(d):
         k = nx.arange(N[ax], type_as=f)  # mode indices
@@ -189,9 +248,9 @@ def poisson_mixed_bc_(f, ll, source, nx, periodic_axes=None):
         shape[ax] = N[ax]
         D += lam.reshape(shape)
 
-    if source:  # Helmholtz: (Δ - 1)u = -f
+    if source:  # Solve (Delta - 1)u = -f
         D -= 1.0
-    else:  # pure Poisson: make Λ(0,...,0)=1 to avoid 0-div
+    else:  # pure Poisson: make Lambda(0,...,0)=1 to avoid 0-div
         D[(0,) * d] = 1.0
 
     # --- forward transforms -----------------------------------------
@@ -213,18 +272,19 @@ def poisson_mixed_bc_(f, ll, source, nx, periodic_axes=None):
 
 
 def minus_interior_(dest, M, dpk, cs, dim):
-    """ Subtract dpk from the interior of a staggered variable M and replaces the \
-        interior of dest in place by the result.
+    """Overwrite the interior slice of ``dest`` with ``M - dpk``.
+
+    All arrays follow the staggered-grid convention used by
+    :class:`grids.Svar`, where axis ``dim`` stores an extra cell.  The update is
+    restricted to the interior cells - the entries that exclude the first element
+    along ``dim``.
 
     Args:
-        dest (array): The destination array. It should have the same shape as M.
-        M (array): The source array. It should be defined on a staggered grid. \
-        That is, the shape should be (N0, N1, ..., N_k +1,  Nd) where k is the staggered\
-        dimension.
-        dpk (array): The array to subtract. It should have the shape\
-        (N0, N1,..., N_k-1,..., Nd).
-        cs (tuple): The size of the centered grid i.e. (N0, N1, ..., Nd).
-        dim (int): The dimension along which to subtract. k in the above description.
+        dest (array-like): Output array with the same shape as ``M``.
+        M (array-like): Staggered-grid array containing the current values.
+        dpk (array-like): Difference array defined on the centred grid.
+        cs (tuple[int, ...]): Shape of the centred grid used for slicing.
+        dim (int): Axis along which the variable is staggered.
     """
     assert dest.shape == M.shape, "Destination and source shapes must match"
     slices = [slice(None)] * M.ndim
@@ -237,21 +297,21 @@ def minus_interior_(dest, M, dpk, cs, dim):
 def projCE_(
     dest: grids.Svar, U: grids.Svar, rho_0, rho_1, source: bool, periodic: bool = False
 ):
-    """ Given a staggered variable U, project it so that it satisfies the \
-        continuity equation. The result is stored in dest in place.
-        Steps:
-        p <- Z - div(U)
-        u <- poisson(p) (Solve the Poisson equation)
-        dpk = (dp/dt, dp/dx1, dp/dx2, ...,  p) (on the staggered grid)
-        U = U - interior of dpk
-        Note that the interior means the array where the time/space(periodic = False) or time (periodic = True) boundary was removed (zeroed out)
+    """Project a staggered variable onto the continuity equation subspace.
+
+    The projection enforces ``d_t rho + div(omega) = zeta`` (or its
+    periodic variant) by solving a Poisson problem for the pressure potential
+    and subtracting its discrete gradient from ``U``.  Results are written into
+    ``dest`` in place.
+
     Args:
-        dest (Svar): The destination variable.
-        U (Svar): The source variable.
-        rho_0 (array): The source density.
-        rho_1 (array): The destination density.
-        source (bool): True if we are solving a OT with source problem.
-        periodic (bool): True if we are solving a OT with periodic BC.
+        dest (grids.Svar): Output variable storing the projected staggered field.
+        U (grids.Svar): Input staggered variable before projection.
+        rho_0 (array-like): Source density (initial condition).
+        rho_1 (array-like): Target density (terminal condition).
+        source (bool): Whether the formulation includes source terms (``q >= 1``).
+        periodic (bool, optional): Use periodic boundary conditions in space.  The
+            time axis always keeps Neumann conditions.
     """
 
     assert dest.ll == U.ll, "Destination and source lengths must match"
@@ -281,19 +341,18 @@ def projCE_(
 
 
 def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
-    """Apply the inverse of Q to the input src along the specified dimension.
+    """Apply ``Q^{-1}`` to each 1-D fibre of ``src`` along axis ``dim``.
 
-    This function modifies the array dest in-place and calculates
-    dest[i1, i2, ... , :, i_n] = Q^-1 * src[i1,i2,... :, i_n] for all i1,...,in and :\
-    is at the specified dimension. That is, it applies the inverse of Q to each 1D slice.
+    The helper reshapes the array so that slices along ``dim`` become columns,
+    solves the linear systems using ``nx.solve``, and writes the result to
+    ``dest``.  Shapes are preserved, and the operation is performed in place.
 
     Args:
-        dest (array): The destination array.
-        Q (array): The matrix Q to apply the inverse.
-        src (array): The source array.
-        dim (int): The dimension along which to apply the inverse.
-        nx (module): The backend module used for computation such as numpy or torch.
-
+        dest (array-like): Output buffer receiving the transformed values.
+        Q (array-like): Square matrix defining the 1-D coupling to invert.
+        src (array-like): Input data whose fibres are transformed.
+        dim (int): Axis along which to apply the inverse.
+        nx (Backend): Numerical backend used for solving the linear systems.
     """
 
     # Put the dimension to the first axis
@@ -323,25 +382,23 @@ def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
 
 
 def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
-    """Calculate the projection of the interpolation operator for x.
+    r"""Project ``(U, V)`` onto the linear constraint ``V = I(U)``.
 
-    Given the input x=(U,V), calculate the projection of the interpolation operator by
-    U' = Q^-1(U+I*V) and V' = I(U')
-    where I is the interpolation operator.
-    Here, Q = Id+I*I. The result is stored in dest=(U',V').
+    Given an input pair ``x = (U, V)``, the routine computes
+
+    .. math:: U' = (\mathrm{Id} + I^\top I)^{-1}(U + I^\top V), \qquad
+              V' = I(U')
+
+    where each dimension has its own precomputed matrix ``Q[k] = Id + I^T I``.
+    The projected pair ``(U', V')`` is written to ``dest`` in place.
 
     Args:
-        dest (CSvar): The destination variable.
-        x (CSvar): The input variable.
-        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where
-        Qk = Id + I^T I such that I is the interpolation matrix
-        (1/2, 1/2, .... 0)
-        (0, 1/2, 1/2, ...,0)
-        ...
-        (0, ..., 1/2, 1/2)
-        of size (x.cs[k]-1) x x.cs[k] for each dimension k.
-        We will precompute these matrices for efficiency.
-        noV (bool): If True, only calculate U' and ignore V'.
+        dest (grids.CSvar): Destination variable storing the projected pair.
+        x (grids.CSvar): Input centred/staggered variables ``(U, V)``.
+        Q (Sequence[array-like]): Per-dimension matrices representing
+            ``Id + I^T I`` on the centred grid.
+        log (dict, optional): Diagnostics dictionary; when provided, the norm of
+            ``U'`` is appended under the ``"U_prime_interp"`` key.
     """
     assert dest.ll == x.ll, "Length scales must match"
 
@@ -372,30 +429,36 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
 
 
 def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=None):
-    """Calculate the projection of the interpolation and constraint operator for x.
+    r"""Project onto interpolation and affine constraints simultaneously.
 
-    Given the input x=(U,V), calculate the projection of interpolation&constraint
-    operator.
-    We first calculate
-    lambda = (H(Id+I^* I)^{-1}H*)^{-1}(H(Id+I^* I)^{-1}(U+I*V)-F)
-    where H is the H function for the constraint and F is the right-hand side.
-    Then, we calculate
-    U' = (Id+I^* I)^{-1}(U+I*V-H^* lambda)
-    V' = I(U) where I is the interpolation operator.
-    The result is stored in dest=(U',V').
+    Given ``x = (U, V)``, the projection solves
+
+    .. math::
+        \lambda = (H (\mathrm{Id}+I^T I)^{-1} H^*)^{-1}
+            (H (\mathrm{Id}+I^T I)^{-1}(U + I^T V) - F)
+
+    followed by
+
+    .. math::
+        U' = (\mathrm{Id}+I^T I)^{-1}(U + I^T V - H^* \lambda), \qquad
+        V' = I(U').
+
+    The tensors ``Q`` and ``HQH`` store the matrices ``Id + I^T I`` and
+    ``H (Id + I^T I)^{-1} H^*`` respectively, so that the projection can be
+    assembled efficiently.  When ``log`` is provided, norms of the intermediate
+    quantities are appended for diagnostics.
 
     Args:
-        dest (CSvar): The destination variable.
-        x (CSvar): The input variable.
-        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where\
-        Qk = Id + I^T I such that I is the interpolation matrix.
-        HQH (array of shape (cs[0], cs[0])): The matrix HQ^{-1}H* where H=hI and \
-            h is the H function for the constraint.
-        H (array of shape cs): The H function for the constraint.
-        F (array of shape (cs[0],)): The right-hand side of the constraint.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
+        dest (grids.CSvar): Output variable receiving ``(U', V')``.
+        x (grids.CSvar): Input pair prior to projection.
+        Q (Sequence[array-like]): Per-dimension matrices for ``Id + I^T I``.
+        HQH (array-like): Matrix ``H (Id + I^T I)^{-1} H^*`` used to recover the
+            Lagrange multipliers.
+        H (array-like): Discretised constraint operator ``H``.
+        F (array-like): Right-hand side of the affine constraint.
+        log (dict, optional): Diagnostics dictionary.  Expected keys include
+            ``"pre_lambda"``, ``"lambda"``, ``"lambda_eqn"``, and
+            ``"U_prime_interp"``.
     """
     if log is None:
         log = {
@@ -494,7 +557,7 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
 
 
 def periodic_interpolation_matrix(N, nx: Backend, type_as=None):
-    """Return the N×N matrix I_N with ½ on the main and +1 cyclic diagonals."""
+    """Return the N-by-N matrix ``I_N`` with 0.5 on the main and +1 cyclic diagonals."""
     I_N = nx.zeros((N, N), type_as=type_as)
     idx = nx.arange(N)
     I_N[idx, idx] = 0.5  # main diagonal
@@ -503,10 +566,10 @@ def periodic_interpolation_matrix(N, nx: Backend, type_as=None):
 
 
 def itit_plus_identity(N, nx: Backend, type_as=None):
-    """
-    Compute I_N.T @ I_N + Id for the periodic interpolation matrix I_N.
+    """Return ``I_N.T @ I_N + Id`` for the periodic interpolation matrix ``I_N``.
+
     The result is a circulant, tridiagonal-with-wrap matrix whose entries are
-        1.5 on the diagonal and 0.25 on the ±1 cyclic off-diagonals.
+    1.5 on the diagonal and 0.25 on the +/- 1 cyclic off-diagonals.
     """
     idx = nx.arange(N)
     M = nx.zeros((N, N), type_as=type_as)
@@ -538,19 +601,14 @@ def precomputeProjInterp(cs, rho0, rho1, periodic=False):
 
 
 def precomputeHQH(Q, H, cs, ll):
-    """Precompute the matrix HQ^{-1}H* where H is the H function for the constraint
-    and Q=Id+I*I.
+    """Build ``H (Id + I^T I)^{-1} H^T`` for the interpolation constraint.
 
     Args:
-        Q (array): Q = Id + I^T I such that I is the interpolation matrix
-        (1/2, 1/2, .... 0)
-        (0, 1/2, 1/2, ...,0)
-        ...
-        (0, ..., 1/2, 1/2)
-        of size T x T+1 where T is the size for the time dimension in the centered grid.
-        We will precompute these matrices for efficiency.
-        H (array): The H function for the constraint.
-        nx (module): The backend module used for computation such as numpy or torch.
+        Q (array-like): Square block ``Id + I^T I`` associated with the temporal
+            interpolation operator.
+        H (array-like): Constraint kernel evaluated on the centred grid.
+        cs (tuple[int, ...]): Grid resolution (used for scaling factors).
+        ll (tuple[float, ...]): Physical lengths (used for integration weights).
     """
     nx = get_backend_ext(Q, H)
     H_sum = nx.sum(H**2, axis=tuple(range(1, H.ndim))).reshape(-1, H.shape[0])
@@ -663,7 +721,7 @@ def vectorize_VF(V, F):
     np.ndarray
         1-D vector obtained by concatenating
 
-        1. ``flatten_array(V.D[i], fastest_axis=i)`` for ``i = 0 … V.N-1``
+        1. ``flatten_array(V.D[i], fastest_axis=i)`` for ``i = 0 ... V.N-1``
         2. ``flatten_array(V.Z, fastest_axis=V.N-1)``
         3. ``F``
 
@@ -685,7 +743,7 @@ def vectorize_VF(V, F):
 
 def vectorize_VF_multiF(V, F_list):
     """
-    Flatten V and *all* Fᵢ into one long 1-D array.
+    Flatten V and *all* F_i into one long 1-D array.
 
     Parameters
     ----------
@@ -694,7 +752,7 @@ def vectorize_VF_multiF(V, F_list):
 
     Returns
     -------
-    1-D array of length (V-part) + n·N0
+        1-D array of length ``(V-part) + n * N0``
     """
     nx = get_backend_ext(F_list[0])
     if not isinstance(F_list, list):
@@ -708,7 +766,7 @@ def vectorize_VF_multiF(V, F_list):
     # 2. centred density
     pieces.append(flatten_array(V.Z, fastest_axis=V.N - 1))
 
-    # 3. all right–hand sides
+    # 3. all right-hand sides
     pieces.extend(F_list)
 
     return nx.concatenate(pieces)
@@ -869,9 +927,9 @@ def build_H_operator_matrix(H, dx: float, fastest_axis: int = 0):
 
 
 def build_H_operator_matrix_multi(H_list, dx, fastest_axis=0):
-    """
-    Return the sparse matrix of size (n·N0) x (3·N0·N1)
-    representing all n constraints in one shot.
+    """Return the sparse matrix of size ``(n * N0) x (3 * N0 * N1)``.
+
+    The block stacks all ``n`` constraints in one shot.
     """
     nx = get_backend_ext(H_list[0])
     if nx == TorchBackend_ext:
@@ -882,9 +940,9 @@ def build_H_operator_matrix_multi(H_list, dx, fastest_axis=0):
 
     blocks = [
         build_H_operator_matrix(H_i, dx, fastest_axis) for H_i in H_list
-    ]  # each is (N0) × (3·N0·N1)
+    ]  # each is (N0) x (3 * N0 * N1)
     conc = sps.vstack(blocks)
-    return conc  # shape = n·N0 rows
+    return conc  # shape = n * N0 rows
 
 
 def I_of_N(N):
@@ -984,28 +1042,35 @@ def precomputePPT(H, cs, ll, periodic=False):
 def projinterp_constraint_big_matrix(
     dest: grids.CSvar, x: grids.CSvar, solve: callable, H, F, log=None, periodic=False
 ):
-    """Calculate the projection of the interpolation and the constraint operator by constructing a big matrix.
+    r"""Project using the explicit ``PP^T`` block system built by :func:`precomputePPT`.
 
-    Given the input x=(U,V), calculate the projection of interpolation and constraint
-    operator. We consider the matrix
-    P = (I, -Id)
-        (0,  H)
-    where I is the interpolation operator, Id is the identity for the centered variable and H is the H function for the constraint. By noting that the interpolation & the constraint operator can be
-    written as the affine equation
-    P(U, V) = (O, F) (O is the zero variable and F is the right-hand side of the constraint),
-    we calculate the projection dest = (U', V') by the projection formula:
-    (U', V') = (U, V) + P^T (P P^T)^{-1} ((O, F) - P(U, V))
+    Given ``x = (U, V)``, we assemble the block matrix
+
+    .. math::
+        P = \begin{pmatrix} I & -\mathrm{Id} \\ 0 & H \end{pmatrix},
+
+    where ``I`` is the interpolation operator and ``H`` encodes the affine
+    constraints.  The projection solves the linear system
+
+    .. math::
+        (P P^T) y = (\mathcal{O}, F) - P(U, V),
+
+    followed by the update ``(U', V') = (U, V) + P^T y``.  The sparse system
+    ``PP^T`` is factorised once via :func:`precomputePPT` and a ``solve`` callback
+    applies ``(PP^T)^{-1}`` to vectors during the iterations.
 
     Args:
-        dest (CSvar): The destination variable.
-        x (CSvar): The input variable.
-        P (array): The matrix P.
-        PPT (callable): The "solve" function for the matrix PPT.
-        H (array): The H function for the constraint.
-        F (array of shape (cs[0],)): The right-hand side of the constraint.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
+        dest (grids.CSvar): Output pair ``(U', V')`` after projection.
+        x (grids.CSvar): Input pair ``(U, V)`` before projection.
+        solve (Callable[[array-like], array-like]): Linear solver that applies
+            ``(PP^T)^{-1}`` to a vectorised residual.
+        H (Sequence[array-like] | array-like): Constraint operators for each
+            inequality block.
+        F (Sequence[array-like] | array-like): Right-hand sides matching ``H``.
+        log (dict, optional): Diagnostics dictionary mirroring the keys used in
+            :func:`projinterp_constraint_`.
+        periodic (bool, optional): Whether spatial axes use periodic staggering
+            (affects the interpolation operator ``I``).
     """
     if log is None:
         log = {
@@ -1061,27 +1126,36 @@ def projinterp_constraint_big_matrix(
 def project_constraint_inequality_single_(
     dest: grids.CSvar, v: grids.CSvar, Hs: List, GL, GU
 ):
-    """Project the variable x onto the constraint
-    GL(t) <= H(t, v) <= GU(t)
-    where v = (rho, omega, zeta) and
-    H(t, v) = int H_rho(t,x)rho(t, x) dx +  int <H_omega(t,x), omega(t, x) dx + int H_zeta(t, x)zeta(t, x) dx.
-    where H_rho, H_omega, and H_zeta are the H functions for the constraint.
+    r"""Project ``v`` onto the constraint ``GL(t) <= H(t, v) <= GU(t)``.
 
-    This function modifies the destination variable dest in place.
-    The projection is done by the following formula:
-    dest = v - sum_{i=0->T-1} lambda_i(v) * H(t_i, *)/||H(t_i, *)||^2
-    Here, lambda_i(v)
-    = 0 if GL(t_i) <= H(t_i, v) <= GU(t_i),
-    = (H(t_i, v) - GL(t_i)) if H(t_i, v) < GL(t_i),
-    = (H(t_i, v) - GU(t_i)) if H(t_i, v) > GU(t_i).
+    Writing ``v = (rho, omega, zeta)`` and
+
+    .. math::
+        H(t, v) = \int H_\rho(t, x) \rho(t, x)\,dx
+            + \int \langle H_\omega(t, x), \omega(t, x) \rangle\,dx
+            + \int H_\zeta(t, x) \zeta(t, x)\,dx,
+
+    the projection updates
+
+    .. math::
+        v \leftarrow v - \sum_{i=0}^{T-1} \lambda_i(v) \frac{H(t_i, \cdot)}{\|H(t_i, \cdot)\|^2},
+
+    with coefficients
+
+    .. math::
+        \lambda_i(v) =
+            \begin{cases}
+                0 & \text{if } GL(t_i) \le H(t_i, v) \le GU(t_i),\\
+                H(t_i, v) - GL(t_i) & \text{if } H(t_i, v) < GL(t_i),\\
+                H(t_i, v) - GU(t_i) & \text{if } H(t_i, v) > GU(t_i).
+            \end{cases}
 
     Args:
-        dest (CSvar): The destination variable to be modified.
-        v (CSvar): The input variable to be projected.
-        Hs (list of arrays): The list of H functions for the constraint in the form
-            [H_rho, H_omega0, H_omega1,, ..., H_zeta]
-        GL (array): The lower bound of the constraint.
-        GU (array): The upper bound of the constraint.
+        dest (grids.CSvar): Destination variable overwritten with the projection.
+        v (grids.CSvar): Input variable to be projected.
+        Hs (list[array-like]): Kernels ``[H_rho, H_omega0, H_omega1, ..., H_zeta]``.
+        GL (array-like): Lower bounds of the constraint.
+        GU (array-like): Upper bounds of the constraint.
     """
     if not isinstance(Hs, list):
         raise ValueError("Hs must be a list of arrays.")
@@ -1206,48 +1280,41 @@ def computeGeodesic_old(
     U=None,
     V=None,
 ):
-    """Solve the unbalanced optimal transport problem with source using the Douglas-\
-        Rachford algorithm.
-
-    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
-        length scales ll,
-    the constraint function H, and the right-hand side F, this function computes the \
-        geodesic for the
-    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+    """Compute a dynamic unbalanced OT geodesic via Douglas-Rachford splitting.
 
     Args:
-        rho0 (array): The source density.
-        rho1 (array): The destination density.
-        T (array): The cost matrix.
-        ll (tuple): The length scales of the domain.
-        H (array): The constraint function. If None, the algorithm will solve the \
-            standard optimal transport problem.
-        F (array): The right-hand side of the constraint. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        p (float): The p-norm for the energy functional.
-        q (float): The q-norm for the energy functional.
-        delta (float): The scaling factor for the grid.
-        niter (int): The number of iterations for the algorithm.
-        eps (float): The tolerance for the Dykstra algorithm.
-        alpha (float): The step size for the Douglas-Rachford algorithm.
-        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
-        verbose (bool): If True, print the progress of the algorithm.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
-        init (str) : The initialization method for the algorithm. If None, the algorithm \
-            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
-            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
-            use the provided U and V as the initialization.
-        U (array): The initial value for U if init='manual'.
-        V (array): The initial value for V if init='manual'.
+        rho0 (array-like): Initial density.
+        rho1 (array-like): Target density.
+        T (array-like): Number of time points on the centred grid.
+        ll (tuple[float, ...]): Physical lengths of each spatial axis.
+        H (array-like, optional): Constraint operator.  When omitted the solver
+            solves the unconstrained dynamic OT problem.
+        F (array-like, optional): Affine right-hand side associated with ``H``.
+        p (float, optional): Transport exponent (``1`` or ``2``).  Defaults to ``2``.
+        q (float, optional): Source exponent controlling mass change. Defaults to ``2``.
+        delta (float, optional): Interpolation parameter controlling how much mass
+            creation/destruction is penalized (larger values impose stronger
+            penalties).
+        niter (int, optional): Maximum Douglas-Rachford iterations.
+        big_matrix (bool, optional): If ``True`` use the explicit ``PP^T`` block
+            factorisation; otherwise rely on precomputed ``HQH``.
+        periodic (bool, optional): Enable periodic boundary conditions in space.
+        alpha (float, optional): Relaxation parameter for the DR update.  When
+            ``None`` a heuristic default is chosen from the input data.
+        gamma (float, optional): Step size of the proximal map associated with ``F``.
+        verbose (bool, optional): Emit textual progress every 1% of the iterations.
+        log (dict, optional): Diagnostics dictionary populated by the proximal
+            operators.
+        init (str, optional): Initialisation strategy (``None`` for linear
+            interpolation, ``"fisher-rao"``, or ``"manual"`` with ``U``/``V``).
+        U (array-like, optional): Initial ``U`` used when ``init == "manual"``.
+        V (array-like, optional): Initial ``V`` used when ``init == "manual"``.
 
     Returns:
-        z (CSvar): The optimal transport solution.
-        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
-            continuity equation, and distance from the constraint function at each \
-            iteration. If H and F are None, HFlist is None.
-
+        tuple[grids.CSvar, tuple]: The converged variable ``z`` together with
+        diagnostic arrays ``(Flist, Clist, Ilist, HFlist)`` capturing the energy,
+        continuity residual, interpolation residual, and (if ``H`` is provided)
+        constraint violation per iteration.
     """
     assert delta > 0, "Delta must be positive"
     source = q >= 1.0  # Check if source problem
@@ -1395,7 +1462,6 @@ def computeGeodesic_inequality(
     niter=1000,
     big_matrix=False,
     periodic=False,
-    eps=10e-3,
     alpha=None,
     gamma=None,
     verbose=False,
@@ -1404,53 +1470,42 @@ def computeGeodesic_inequality(
     U=None,
     V=None,
 ):
-    """Solve the unbalanced optimal transport problem with source using the Douglas-\
-        Rachford algorithm.
-
-    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
-        length scales ll,
-    the constraint function H, and the right-hand side F, this function computes the \
-        geodesic for the
-    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+    """Douglas-Rachford solver with both equality and inequality constraints.
 
     Args:
-        rho0 (array): The source density.
-        rho1 (array): The destination density.
-        T (array): The cost matrix.
-        ll (tuple): The length scales of the domain.
-        H (array): The constraint function. If None, the algorithm will solve the \
-            standard optimal transport problem.
-        Hs (list of arrays): The list of H functions for the inequality constraint in the form
-            [H_rho, H_omega0, H_omega1,, ..., H_zeta]. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        GL (array): The lower bound of the constraint. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        F (array): The right-hand side of the constraint. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        p (float): The p-norm for the energy functional.
-        q (float): The q-norm for the energy functional.
-        delta (float): The scaling factor for the grid.
-        niter (int): The number of iterations for the algorithm.
-        eps (float): The tolerance for the Dykstra algorithm.
-        alpha (float): The step size for the Douglas-Rachford algorithm.
-        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
-        verbose (bool): If True, print the progress of the algorithm.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
-        init (str) : The initialization method for the algorithm. If None, the algorithm \
-            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
-            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
-            use the provided U and V as the initialization.
-        U (array): The initial value for U if init='manual'.
-        V (array): The initial value for V if init='manual'.
+        rho0 (array-like): Initial density.
+        rho1 (array-like): Target density.
+        T (array-like): Number of time points on the centred grid.
+        ll (tuple[float, ...]): Physical lengths per axis.
+        H (array-like, optional): Affine constraint operator.
+        Hs (Sequence[array-like], optional): Constraint kernels used for the
+            inequality projectors (``[H_rho, H_omega..., H_zeta]``).
+        GL (array-like, optional): Lower bounds for ``H_s`` constraints.
+        GU (array-like, optional): Upper bounds for ``H_s`` constraints.
+        F (array-like, optional): Right-hand side for the affine constraint ``H``.
+        p (float, optional): Transport exponent. Defaults to ``2``.
+        q (float, optional): Source exponent. Defaults to ``2``.
+        delta (float, optional): Interpolation parameter controlling how much mass
+            creation/destruction is penalized (larger values impose stronger
+            penalties).
+        niter (int, optional): Maximum number of Douglas-Rachford iterations.
+        big_matrix (bool, optional): Switch to the explicit ``PP^T`` formulation.
+        periodic (bool, optional): Enable periodic boundary conditions in space.
+        alpha (float, optional): Relaxation parameter chosen heuristically when
+            left ``None``.
+        gamma (float, optional): Step size for the proximal map of ``F``.
+        verbose (bool, optional): Emit textual progress updates.
+        log (dict, optional): Diagnostics dictionary shared with the proximal
+            operators.
+        init (str, optional): Initialisation strategy (``None``, ``"fisher-rao"``,
+            or ``"manual"`` with supplied ``U``/``V``).
+        U (array-like, optional): Manual initialisation of ``U``.
+        V (array-like, optional): Manual initialisation of ``V``.
 
     Returns:
-        z (CSvar): The optimal transport solution.
-        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
-            continuity equation, and distance from the constraint function at each \
-            iteration. If H and F are None, HFlist is None.
-
+        tuple[grids.CSvar, tuple]: Converged iterate ``x`` and diagnostic arrays
+        ``(Flist, Clist, Ilist, HFlist)`` mirroring
+        :func:`computeGeodesic_old`.
     """
     assert delta > 0, "Delta must be positive"
     source = q >= 1.0  # Check if source problem
@@ -1620,51 +1675,37 @@ def computeGeodesic(
     U=None,
     V=None,
 ):
-    """Solve the unbalanced optimal transport problem with source using the Douglas-\
-        Rachford algorithm.
-
-    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
-        length scales ll,
-    the constraint function H, and the right-hand side F, this function computes the \
-        geodesic for the
-    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+    """Main PPXA-based solver for dynamic unbalanced optimal transport.
 
     Args:
-        rho0 (array): The source density.
-        rho1 (array): The destination density.
-        T (array): The cost matrix.
-        ll (tuple): The length scales of the domain.
-        H (list of list of arrays): The list of lists of H functions for the inequality constraint in the form
-            [H_rho, H_omega0, H_omega1,, ..., H_zeta]. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        GL (list of array): The lower bounds of the constraint. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        GU (list of array): The upper bounds of the constraint. If None, the algorithm will \
-            solve the standard optimal transport problem.
-        p (float): The p-norm for the energy functional.
-        q (float): The q-norm for the energy functional.
-        delta (float): The scaling factor for the grid.
-        niter (int): The number of iterations for the algorithm.
-        eps (float): The tolerance for the Dykstra algorithm.
-        alpha (float): The step size for the Douglas-Rachford algorithm.
-        gamma (float): The regularization parameter for the Douglas-Rachford algorithm.
-        verbose (bool): If True, print the progress of the algorithm.
-        log (dict): The dictionary to store norms of pre_lambda, lambda, and the first \
-            order condition. Assumed to have the keys 'pre_lambda', 'lambda', and \
-            'first_order_condition' and the values are lists to store the norms.
-        init (str) : The initialization method for the algorithm. If None, the algorithm \
-            will use linear interpolation. If 'fisher-rao', the algorithm will use the \
-            Fisher-Rao geodesic as the initialization. If 'manual', the algorithm will \
-            use the provided U and V as the initialization.
-        U (array): The initial value for U if init='manual'.
-        V (array): The initial value for V if init='manual'.
+        rho0 (array-like): Initial density.
+        rho1 (array-like): Target density.
+        T (array-like): Number of time points on the centred grid.
+        ll (tuple[float, ...]): Physical lengths per axis.
+        H (Sequence[Sequence[array-like]] | None): Collection of inequality
+            kernels grouped per constraint block.  Each block mirrors the layout
+            ``[H_rho, H_omega..., H_zeta]``.
+        GL (Sequence[array-like] | None): Lower bounds for each constraint block.
+        GU (Sequence[array-like] | None): Upper bounds for each constraint block.
+        p (float, optional): Transport exponent. Defaults to ``2``.
+        q (float, optional): Source exponent. Defaults to ``2``.
+        delta (float, optional): Interpolation parameter controlling how much mass
+            creation/destruction is penalized (larger values impose stronger
+            penalties).
+        niter (int, optional): Maximum PPXA iterations.
+        big_matrix (bool, optional): Ignored here (kept for API parity).
+        periodic (bool, optional): Enable periodic spatial boundary conditions.
+        alpha (float, optional): Relaxation parameter (auto-selected when ``None``).
+        gamma (float, optional): Step size for the kinetic-energy proximal map.
+        verbose (bool, optional): Emit textual progress updates.
+        log (dict, optional): Diagnostics dictionary shared by proximal operators.
+        init (str, optional): Initialisation strategy.
+        U (array-like, optional): Manual initial ``U`` when ``init == "manual"``.
+        V (array-like, optional): Manual initial ``V`` when ``init == "manual"``.
 
     Returns:
-        z (CSvar): The optimal transport solution.
-        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
-            continuity equation, and distance from the constraint function at each \
-            iteration. If H and F are None, HFlist is None.
-
+        tuple[grids.CSvar, tuple]: Final iterate ``x`` and diagnostic arrays
+        ``(Flist, Clist, Ilist, HFlist)``.
     """
     assert delta > 0, "Delta must be positive"
     source = q >= 1.0  # Check if source problem
