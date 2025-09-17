@@ -1,4 +1,4 @@
-# ACUOT: Affine-Constrained Unbalanced Dynamic Optimal Transport
+# ACUDOT: Affine-Constrained Unbalanced Dynamic Optimal Transport
 
 > TODO: replace the placeholders in this template with project-specific details once they are finalized.
 
