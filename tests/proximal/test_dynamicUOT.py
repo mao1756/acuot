@@ -2641,3 +2641,125 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(z.V.D[0], data["V_D0"])
         np.testing.assert_allclose(z.V.D[1], data["V_D1"])
         np.testing.assert_allclose(z.V.Z, data["V_Z"])
+
+    def test_computeGeodsic_river(self):
+        # Define the problem and calculate geodesics
+        maze = np.zeros((30, 30))
+        maze[13:17, 0:30] = 1
+
+        T = 15
+        N1 = maze.shape[0]
+        N2 = maze.shape[1]
+
+        H1 = np.repeat(maze[np.newaxis, :, :], T, axis=0) * np.cos(np.pi / 4)
+        H2 = np.repeat(maze[np.newaxis, :, :], T, axis=0) * np.sin(np.pi / 4)
+
+        indices = np.arange(0, 30) * 1.0 / 30
+        xx, yy = np.meshgrid(indices, indices)
+
+        rho_0 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1),
+            mean=[15.0 / 30.0, 20.0 / 30.0],
+            cov=2.0 / 36**2,
+        )
+        rho_1 = sp.stats.multivariate_normal.pdf(
+            np.stack([xx, yy], axis=-1), mean=[15.0 / 30.0, 8.0 / 30.0], cov=2.0 / 36**2
+        )
+
+        T = 15  # number of time steps
+        ll = (1.0, 1.0, 1.0)  # size of time x space box
+
+        delta = 2.0
+        #  River constraint
+        Hs = [[np.zeros((T, N1, N2)), H1, H2, np.zeros((T, N1, N2))]]
+        GL = [np.zeros((T,))]
+        GU = [np.ones((T,)) * np.inf]
+        x2, lists = dyn.computeGeodesic(
+            rho_0,
+            rho_1,
+            T,
+            ll,
+            H=Hs,
+            GL=GL,
+            GU=GU,
+            p=2.0,
+            q=2.0,
+            delta=delta,
+            niter=3000,
+        )
+        data = np.load("tests/proximal/test_cases/river.npz")
+        np.testing.assert_allclose(x2.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(x2.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(x2.U.D[2], data["U_D2"])
+        np.testing.assert_allclose(x2.U.Z, data["U_Z"])
+        np.testing.assert_allclose(x2.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(x2.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(x2.V.D[2], data["V_D2"])
+        np.testing.assert_allclose(x2.V.Z, data["V_Z"])
+
+    def test_computeGeodesic_budget(self):
+        def gauss(x, x_0, sigma, mass, K):
+            # Gaussian bump
+            normalized_factor = np.exp(-((x - x_0) ** 2) / sigma**2)
+            return mass * (normalized_factor * K / np.sum(normalized_factor))
+
+        # Plotting initial and the final density
+        sigma = 0.03
+        K = 256
+        X = np.linspace(0, 1, K)  # Discretization of the time-space domain
+
+        rho_0 = gauss(X, 0.25, sigma, 1, K)  # Initial density
+        rho_1 = gauss(X, 0.75, sigma, 1, K)  # Final density
+
+        # Normalizing densities
+        rho_0 /= np.sum(rho_0) / 256  # make sure the total mass is 1
+        rho_1 /= np.sum(rho_1) / (256 * 2)
+
+        rho_0.dtype = np.float64
+        rho_1.dtype = np.float64
+
+        T = 15  # number of time steps (midpoints at (i+0.5)/T)
+        ll = (1.0, 1.0)  # time x space box size
+
+        H_start_index = None  # e.g., 128 for "right half"; set to an int or leave None
+        H_start_x = 0.5  # e.g., 0.5 for "right half"; set to a float in [0,1] or None
+
+        if H_start_index is not None:
+            j0 = int(np.clip(H_start_index, 0, K - 1))
+        else:
+            # default to coordinate specification
+            if H_start_x is None:
+                H_start_x = 0.5
+            # map x in [0,1] to a cell index on the centered grid
+            j0 = int(np.floor(H_start_x * K))
+            j0 = int(np.clip(j0, 0, K - 1))
+
+        # Build step mask: H=0 on [0, j0), H=1 on [j0, K)
+        H_vec = np.zeros((K,), dtype=float)
+        H_vec[j0:] = 1.0
+        H = np.tile(H_vec, (T, 1))  # repeat across time: shape (T, K)
+
+        # ζ-constrained (regional production cap)
+        Hs = [[np.zeros((T, K)), np.zeros((T, K)), H]]  # (Hρ, Hω, Hζ)
+        GL = [np.zeros((T,))]
+        GU = [0.1 * np.ones((T,))]  # capacity schedule (example)
+        x, _lists = dyn.computeGeodesic(
+            rho_0,
+            rho_1,
+            T,
+            ll,
+            H=Hs,
+            GL=GL,
+            GU=GU,
+            p=2.0,
+            q=2.0,
+            delta=0.5 / np.pi,
+            niter=3000,
+        )
+        data = np.load("tests/proximal/test_cases/budget.npz")
+        np.testing.assert_allclose(x.U.D[0], data["U_D0"])
+        np.testing.assert_allclose(x.U.D[1], data["U_D1"])
+        np.testing.assert_allclose(x.U.Z, data["U_Z"])
+        np.testing.assert_allclose(x.V.D[0], data["V_D0"])
+        np.testing.assert_allclose(x.V.D[1], data["V_D1"])
+        np.testing.assert_allclose(x.V.Z, data["V_Z"])
