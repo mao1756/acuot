@@ -1,3 +1,76 @@
+# ACUOT: Affine-Constrained Unbalanced Optimal Transport
+
+> TODO: replace the placeholders in this template with project-specific details once they are finalized.
+
+## Overview
+- Concise description of the project's purpose and the problems it solves.
+- Summarize the scientific context (dynamic optimal transport, variational formulations, etc.).
+
+## Key Features
+- Flagship capabilities such as proximal solvers, Wasserstein-Fisher-Rao formulation, and the experiment suite.
+- Differentiators compared to other libraries or research codebases.
+- Supported dimensionalities, constraints, or problem classes.
+
+## Getting Started
+### Prerequisites
+- Supported Python versions and operating systems.
+- External dependencies such as GPU, CUDA, solver libraries, or datasets.
+
+### Installation
+    python -m venv .venv
+    source .venv/bin/activate  # Windows: .venv\Scripts\activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+- Mention optional extras or editable installs if applicable (for example, pip install -e .).
+
+### Quick Start
+- Minimal example showing how to load data, configure a problem, and run a solver.
+- Point to CLI commands, Python entry points, or Jupyter notebooks for tutorials.
+
+## Running Experiments
+- Describe how experiments are organized under exploratory/ (notebook structure, naming conventions, archival of results).
+- Explain how to reproduce published benchmarks or add new experiments.
+- Call out environment variables or configuration files that control experiment behavior.
+
+## Repository Layout
+- proximal/: core algorithms, problem formulations, and utilities.
+- exploratory/: research notebooks and archived experiments.
+- tests/: automated tests and fixtures.
+- Add or adjust entries to reflect the current structure of the project.
+
+## Configuration
+- Overview of configuration options (YAML or JSON files, CLI flags, environment variables).
+- Document where to place dataset paths, checkpoints, or cache directories.
+
+## Testing
+    pytest -q
+- Include guidance on running slow or optional test suites.
+- Mention continuous integration status or links if configured.
+
+## Documentation
+- Link to rendered docs, publications, talks, or slide decks if they exist.
+- Instructions for building documentation locally (for example, Sphinx or MkDocs).
+
+## Citation
+- Provide a BibTeX entry or paper reference if the project accompanies a publication.
+- Include acknowledgment text for researchers citing this work.
+
+## License
+- SPDX identifier: GPL-3.0-or-later.
+- Reference the LICENSE file and summarize obligations for derivative work.
+
+## Acknowledgements
+- Credit collaborators, institutions, or funding sources.
+- Mention upstream libraries or datasets that inspired the work.
+
+## Contact
+- Preferred channels for support requests (issues, email, chat).
+- Response time expectations or office hours if relevant.
+
+---
+
+## Original README
+
 # Results of the experiments
 Here, we record the results of our experiments so far. For the information about the repository, see below.
 
