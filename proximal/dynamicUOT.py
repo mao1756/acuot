@@ -1259,7 +1259,7 @@ def stepPPXA(
     return x, ys, pis
 
 
-def computeGeodesic_old(
+def computeGeodesic_equality(
     rho0,
     rho1,
     T,
@@ -1270,7 +1270,7 @@ def computeGeodesic_old(
     q=2.0,
     delta=1.0,
     niter=1000,
-    big_matrix=False,
+    big_matrix=True,
     periodic=False,
     alpha=None,
     gamma=None,
@@ -1280,7 +1280,9 @@ def computeGeodesic_old(
     U=None,
     V=None,
 ):
-    """Compute a dynamic unbalanced OT geodesic via Douglas-Rachford splitting.
+    r"""Compute a dynamic unbalanced OT geodesic via Douglas-Rachford splitting.
+    The solver is only compatible with an equality constraint of the form
+    \int_{\Omega} H(t, x) \rho(t, x) dx = F(t), but it is often faster than the main solver.
 
     Args:
         rho0 (array-like): Initial density.
@@ -1444,213 +1446,6 @@ def computeGeodesic_old(
         print("\nDone.")
 
     return z, (Flist, Clist, Ilist, HFlist)
-
-
-def computeGeodesic_inequality(
-    rho0,
-    rho1,
-    T,
-    ll,
-    H=None,
-    Hs=None,
-    GL=None,
-    GU=None,
-    F=None,
-    p=2.0,
-    q=2.0,
-    delta=1.0,
-    niter=1000,
-    big_matrix=False,
-    periodic=False,
-    alpha=None,
-    gamma=None,
-    verbose=False,
-    log=None,
-    init=None,
-    U=None,
-    V=None,
-):
-    """Douglas-Rachford solver with both equality and inequality constraints.
-
-    Args:
-        rho0 (array-like): Initial density.
-        rho1 (array-like): Target density.
-        T (array-like): Number of time points on the centred grid.
-        ll (tuple[float, ...]): Physical lengths per axis.
-        H (array-like, optional): Affine constraint operator.
-        Hs (Sequence[array-like], optional): Constraint kernels used for the
-            inequality projectors (``[H_rho, H_omega..., H_zeta]``).
-        GL (array-like, optional): Lower bounds for ``H_s`` constraints.
-        GU (array-like, optional): Upper bounds for ``H_s`` constraints.
-        F (array-like, optional): Right-hand side for the affine constraint ``H``.
-        p (float, optional): Transport exponent. Defaults to ``2``.
-        q (float, optional): Source exponent. Defaults to ``2``.
-        delta (float, optional): Interpolation parameter controlling how much mass
-            creation/destruction is penalized (larger values impose stronger
-            penalties).
-        niter (int, optional): Maximum number of Douglas-Rachford iterations.
-        big_matrix (bool, optional): Switch to the explicit ``PP^T`` formulation.
-        periodic (bool, optional): Enable periodic boundary conditions in space.
-        alpha (float, optional): Relaxation parameter chosen heuristically when
-            left ``None``.
-        gamma (float, optional): Step size for the proximal map of ``F``.
-        verbose (bool, optional): Emit textual progress updates.
-        log (dict, optional): Diagnostics dictionary shared with the proximal
-            operators.
-        init (str, optional): Initialisation strategy (``None``, ``"fisher-rao"``,
-            or ``"manual"`` with supplied ``U``/``V``).
-        U (array-like, optional): Manual initialisation of ``U``.
-        V (array-like, optional): Manual initialisation of ``V``.
-
-    Returns:
-        tuple[grids.CSvar, tuple]: Converged iterate ``x`` and diagnostic arrays
-        ``(Flist, Clist, Ilist, HFlist)`` mirroring
-        :func:`computeGeodesic_old`.
-    """
-    assert delta > 0, "Delta must be positive"
-    source = q >= 1.0  # Check if source problem
-
-    nx = get_backend_ext(rho0, rho1)
-
-    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
-        projCE_(
-            y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
-        )
-        proxF_(y.V, x.V, gamma, p, q)
-
-    def prox2(
-        y: grids.CSvar,
-        x: grids.CSvar,
-        Q,
-        solve=None,
-        HQH=None,
-        H=None,
-        F=None,
-        big_matrix=False,
-    ):
-        if H is None or F is None:
-            projinterp_(y, x, Q, log)
-        else:
-            if big_matrix:
-                projinterp_constraint_big_matrix(y, x, solve, H, F, log, periodic)
-            else:
-                projinterp_constraint_(y, x, Q, HQH, H, F, log)
-            print(y.dist_from_constraint(H, F))
-
-    def prox3(
-        y: grids.CSvar,
-        x: grids.CSvar,
-        Hs=None,
-        GL=None,
-        GU=None,
-    ):
-        """Project onto the inequality constraint GL <= Hs(x) <= GU."""
-        if Hs is None or GL is None or GU is None:
-            raise ValueError(
-                "Hs, GL, and GU must be provided for inequality constraints."
-            )
-        project_constraint_inequality_single_(y, x, Hs, GL, GU)
-
-    # Adjust mass to match if not a source problem
-    if q < 1.0:
-        if verbose:
-            print("Computing geodesic for standard optimal transport...")
-        rho1 *= nx.sum(rho0) / nx.sum(rho1)
-        delta = 1.0  # Ensure delta is set correctly for non-source problems
-        if alpha is None:
-            alpha = 1.8
-        if gamma is None:
-            gamma = max(nx.max(rho0), nx.max(rho1)) / 2
-    else:
-        if H is None or F is None:
-            if verbose:
-                print("Computing a geodesic for optimal transport with source...")
-        else:
-            if verbose:
-                print(
-                    "Computing a geodesic for optimal transport with source and constraint... (including inequality constraints)"
-                )
-        if alpha is None:
-            alpha = 1.8
-        if gamma is None:
-            gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
-
-    # Initialization
-    ys = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(3)]
-    pis = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(3)]
-    x = sum(ys[1:], start=ys[0]) * (1.0 / len(ys))  # Average of the initial variables
-
-    # Change of variable for scale adjustment
-    for var in [x] + ys + pis:
-        var.dilate_grid(1 / delta)
-        var.rho1 *= delta**rho0.ndim
-        var.rho0 *= delta**rho0.ndim
-
-    # Precompute projection interpolation operators if needed
-    Q = precomputeProjInterp(x.cs, rho0, rho1, periodic)
-    HQH = (
-        precomputeHQH(Q[0], H, x.cs, x.ll)
-        if not big_matrix and (H is not None)
-        else None
-    )
-    PPT = (
-        precomputePPT(H, list(x.cs), x.ll, periodic=periodic)
-        if big_matrix and (H is not None)
-        else None
-    )
-    solve = spsla.factorized(PPT) if PPT is not None else None
-
-    Flist, Clist, Ilist = (
-        nx.zeros(niter, type_as=rho0),
-        nx.zeros(niter, type_as=rho0),
-        nx.zeros(niter, type_as=rho0),
-    )
-    HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
-
-    for i in range(niter):
-        if i % (niter // 100) == 0:
-            if verbose:
-                print(f"\rProgress: {i // (niter // 100)}%", end="")
-
-        x, ys, pis = stepPPXA(
-            x,
-            ys,
-            pis,
-            [
-                lambda y, x: prox1(y, x, source, gamma, p, q, periodic),
-                lambda y, x: prox2(
-                    y,
-                    x,
-                    Q,
-                    solve,
-                    HQH,
-                    H,
-                    F,
-                    big_matrix,
-                ),
-                lambda y, x: prox3(y, x, Hs=Hs, GL=GL, GU=GU),
-            ],
-            alpha,
-        )
-
-        Flist[i] = x.energy(delta, p, q)
-        Clist[i] = x.dist_from_CE()
-        Ilist[i] = x.dist_from_interp()
-        if H is not None:
-            HFlist[i] = sum(x.dist_from_constraint(H, F))
-
-    # Final projection and positive density adjustment
-    projCE_(
-        x.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
-    )
-    x.proj_positive()
-    x.dilate_grid(delta)  # Adjust back to original scale
-    x.interp_()  # Final interpolation adjustment
-
-    if verbose:
-        print("\nDone.")
-
-    return x, (Flist, Clist, Ilist, HFlist)
 
 
 def computeGeodesic(
