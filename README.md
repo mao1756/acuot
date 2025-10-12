@@ -1,4 +1,9 @@
-# ACUDOT: Affine-Constrained Unbalanced Dynamic Optimal Transport
+<p align="center">
+  <img src="paper/figures/header.png" alt="Project header" width="100%">
+</p>
+# ACUOT: Affine-Constrained Unbalanced Optimal Transport
+
+
 
 > TODO: replace the placeholders in this template with project-specific details once they are finalized.
 
