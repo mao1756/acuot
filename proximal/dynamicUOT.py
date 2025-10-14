@@ -1460,7 +1460,6 @@ def computeGeodesic(
     q=2.0,
     delta=1.0,
     niter=1000,
-    big_matrix=False,
     periodic=False,
     alpha=None,
     gamma=None,
@@ -1469,6 +1468,7 @@ def computeGeodesic(
     init=None,
     U=None,
     V=None,
+    track_terminal_distance=False,
 ):
     """Main PPXA-based solver for dynamic unbalanced optimal transport.
 
@@ -1488,7 +1488,6 @@ def computeGeodesic(
             creation/destruction is penalized (larger values impose stronger
             penalties).
         niter (int, optional): Maximum PPXA iterations.
-        big_matrix (bool, optional): Ignored here (kept for API parity).
         periodic (bool, optional): Enable periodic spatial boundary conditions.
         alpha (float, optional): Relaxation parameter (auto-selected when ``None``).
         gamma (float, optional): Step size for the kinetic-energy proximal map.
@@ -1497,6 +1496,8 @@ def computeGeodesic(
         init (str, optional): Initialisation strategy.
         U (array-like, optional): Manual initial ``U`` when ``init == "manual"``.
         V (array-like, optional): Manual initial ``V`` when ``init == "manual"``.
+        track_terminal_distance (bool, optional): If ``True``, compute and return
+            the distance of each iterate x to the last iterate.
 
     Returns:
         tuple[grids.CSvar, tuple]: Final iterate ``x`` and diagnostic arrays
@@ -1584,6 +1585,11 @@ def computeGeodesic(
         nx.zeros(niter, type_as=rho0),
     )
 
+    Dlist = None
+    if track_terminal_distance:
+        Dlist = nx.zeros(niter, type_as=rho0)
+        xlist = []
+
     for i in range(niter):
         if i % (niter // 100) == 0:
             if verbose:
@@ -1600,6 +1606,9 @@ def computeGeodesic(
         Clist[i] = x.dist_from_CE()
         Ilist[i] = x.dist_from_interp()
 
+        if track_terminal_distance:
+            xlist.append(x.copy())
+
     # Final projection and positive density adjustment
     projCE_(
         x.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
@@ -1611,4 +1620,10 @@ def computeGeodesic(
     if verbose:
         print("\nDone.")
 
-    return x, (Flist, Clist, Ilist)
+    if track_terminal_distance:
+        Dlist = nx.zeros(niter, type_as=rho0)
+        x_final = xlist[-1]
+        for i in range(niter):
+            Dlist[i] = (xlist[i] - x_final).norm()
+
+    return x, (Flist, Clist, Ilist, Dlist)
