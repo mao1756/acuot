@@ -3,153 +3,86 @@
 </p>
 
 # ACUOT: Affine-Constrained Unbalanced Optimal Transport
-> TODO: replace the placeholders in this template with project-specific details once they are finalized.
 
-## Overview
-- Concise description of the project's purpose and the problems it solves.
-- Summarize the scientific context (dynamic optimal transport, variational formulations, etc.).
+ACUOT is a code for calculating an optimal interpolation between two distributions that may have different total masses while imposing the constraint on the interpolation path. For example, a problem of transporting a population of particles while avoiding obstacles can be solved using this code.
 
-## Key Features
-- Flagship capabilities such as proximal solvers, Wasserstein-Fisher-Rao formulation, and the experiment suite.
-- Differentiators compared to other libraries or research codebases.
-- Supported dimensionalities, constraints, or problem classes.
+ACUOT is based on the theory of [Wasserstein-Fisher-Rao optimal transport](https://arxiv.org/pdf/1506.06430), and seeks the interpolation path that miminizes the Wasserstein-Fisher-Rao energy while obeying the constraint.
+
+## Mathematical formulation
+ACUOT formally solves the following problem: for given two distributions $\rho_0(x), \rho_1(x)$ on a rectangular grid $\Omega$, we find the path of distributions $\rho(t,x) \in [0,\infty)$, the momentum of the mass $\omega(t,x) \in \mathbb{R}^d$, and the source term $\zeta(t, x) \in \mathbb{R}$ (controlls birth-death process of mass) that minimizes the Wasserstein-Fisher-Rao energy:
+
+$$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\Omega} \frac{\|\omega(t, x)\|^2 + \delta^2|\zeta(t,x)|^2}{\rho(t,x)}dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\omega ) = \zeta, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x) \\ &L(t) \leq \int_{\Omega}H^{\rho}(t,x)\rho(t,x)dx + \int_{\Omega}H^{\omega}(t,x)\cdot \omega(t,x)dx + \int_{\Omega}H^{\zeta}(t,x)\zeta(t,x)dx \leq U(t) \end{align} \tag*{}$$
+
+Here, $\delta>0$ is the parameter that controls the ratio between the transport $\omega$ and the creation or destruction of mass $\zeta$. For more details, refer to our [theoretical paper](https://arxiv.org/abs/2402.15860) and numerical paper(TBD).
 
 ## Getting Started
-### Prerequisites
-- Supported Python versions and operating systems.
-- External dependencies such as GPU, CUDA, solver libraries, or datasets.
 
 ### Installation
-    python -m venv .venv
-    source .venv/bin/activate  # Windows: .venv\Scripts\activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-- Mention optional extras or editable installs if applicable (for example, pip install -e .).
+**Tested with:** Python 3.12 (we used 3.12.7) and the versions pinned in `requirements.txt`  
+(Example stack used in the paper: NumPy 2.1.3, SciPy 1.14.1, POT 0.9.5.)
+
+#### 1) Clone the repository
+```bash
+git clone https://github.com/mao1756/acuot.git
+cd acuot
+```
+
+#### 2) Create and activate a virtual environment
+
+**macOS / Linux**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell)**
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+#### 3) Upgrade tooling and install dependencies
+```bash
+python -m pip install --upgrade pip wheel
+pip install -r requirements.txt
+```
+
 
 ### Quick Start
-- Minimal example showing how to load data, configure a problem, and run a solver.
-- Point to CLI commands, Python entry points, or Jupyter notebooks for tutorials.
+This example calculates the interpolation of rectangular mass under the constraint that the total mass is 1. We remark that this algorithm assumes that the input is a density. In particular, the total mass being 1 means that $\sum \rho(x)\Delta x = 1$ instead of $\sum \rho(x) = 1$ where $\Delta x$ is a step size in space.
 
-## Running Experiments
-- Describe how experiments are organized under exploratory/ (notebook structure, naming conventions, archival of results).
-- Explain how to reproduce published benchmarks or add new experiments.
-- Call out environment variables or configuration files that control experiment behavior.
+```python
+from proximal.dynamicUOT import computeGeodesic
+K = 100 # Number of space grid points
+T = 15 # Number of time grid points
+rho_0 = np.zeros(K)
+rho_1 = np.zeros(K)
+rho_0[0:10] = 10 # sum of rho_0 * (1/K) = 1 
+rho_1[90:100] = 10
+GL = [np.ones(T)] # lower bound of total mass at each time
+GU = [np.ones(T)] # upper bound
+H = [[np.ones(K, T), np.zeros(K, T), np.zeros(K, T)]] # H^rho, H^omega, H^zeta. For multiple constraints, we have multiple inner lists
+ll = (1.0, 1.0) # The length of each dimension (time, space)
+x, lists = computeGeodesic(rho_0, rho_1, T, ll, H=H, GL=GL,GU=GU, niter=5000)
+# Now x.V.D[0][i] contains the density at time t=(i+1/2)/T, i=0,...,T-1
+# x.U.D[0][i] containts the density at time t=i/T, i=0,...,T
+# See the paper on the distinction between U(the staggered variable) and V(the centered variable)
+```
 
-## Repository Layout
-- proximal/: core algorithms, problem formulations, and utilities.
-- exploratory/: research notebooks and archived experiments.
-- tests/: automated tests and fixtures.
-- Add or adjust entries to reflect the current structure of the project.
-
-## Configuration
-- Overview of configuration options (YAML or JSON files, CLI flags, environment variables).
-- Document where to place dataset paths, checkpoints, or cache directories.
-
-## Testing
-    pytest -q
-- Include guidance on running slow or optional test suites.
-- Mention continuous integration status or links if configured.
-
-## Documentation
-- Link to rendered docs, publications, talks, or slide decks if they exist.
-- Instructions for building documentation locally (for example, Sphinx or MkDocs).
+## Notebooks
+The Jupyter notebooks in `paper` folder contains codes used to generate figures in the paper. The following shows the section(s) in the numerical paper covered by each notebook.
+- `001-total-mass-constraint.ipynb`: Section 5.1 (Total mass constraint)
+- `002-barrier-constraint.ipynb`: Section 5.2 (Static/moving barrier)
+- `003-convex-curve-constraint.ipynb`: Section 5.3 (Convex curve interpolation)
+- `004-constraints-on-control.ipyn`: Section 5.4 (Constraints on controls $\omega,\zeta$)
+- `005-mixed-constraint-france.ipynb`: Section 5.5 (Interpolation of population data in France)
+- `006-benchmark-compute-geodesic.py`: Appendix (The code to calculate the wall-clock time for each experiment)
 
 ## Citation
-- Provide a BibTeX entry or paper reference if the project accompanies a publication.
-- Include acknowledgment text for researchers citing this work.
+If you use this code, please cite the following:
 
 ## License
-- SPDX identifier: GPL-3.0-or-later.
-- Reference the LICENSE file and summarize obligations for derivative work.
+See [LICENSE](LICENSE).
 
 ## Acknowledgements
-- Credit collaborators, institutions, or funding sources.
-- Mention upstream libraries or datasets that inspired the work.
-
-## Contact
-- Preferred channels for support requests (issues, email, chat).
-- Response time expectations or office hours if relevant.
-
----
-
-## Original README
-
-# Results of the experiments
-Here, we record the results of our experiments so far. For the information about the repository, see below.
-
-The `exploratory` directory contains Jupyter notebooks used during development. These are organized by the type of constraint studied—`unconstrained`, `total_mass`, `inequality`, `barrier`, and `convex_sets`—with older experiments stored under `exploratory/old`.
-
-## Overall results for the proximal algorithm
-| Constraint        | Status    |            Note                 |   Folder            |
-|-------------------|-----------|-------------------------------- |--------------------------------|
-| Unconstrained     | Success   | Recreation of Chizat et al. (2018) and more |[link](exploratory/proximal/unconstrained) | 
-| Total Mass        | Success   | SHK distance is covered here    | [link](exploratory/proximal/total_mass) |
-| Inequality        | Success   | Basic inequality constraints    | [link](exploratory/proximal/inequality) |
-| Barrier           | Partial   | Moving barrier is more unstable | [link](exploratory/proximal/barrier) |
-| Convex Sets       | N/A       | Not implemented yet             | [link](exploratory/proximal/convex_sets) |
-
-### Unconstrained experiments
-
-| Experiment        | Status    |            Note                 |   Folder            |
-|-------------------|-----------|-------------------------------- |--------------------------------|
-| Transport of Diracs   | Fail   |   | [link](exploratory/proximal/unconstrained/[FAILS]transport_of_diracs.ipynb) |
-| 1D Gaussian Bump   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_1d_gaussian_bump.ipynb) |
-| Deformation of A Ring   | Success   | Recreation of Chizat et al. (2018)  | [link](exploratory/proximal/unconstrained/[WORKS]chizat2018_deformation_of_ring.ipynb) |
-| CIRM Special   | Success   | Presented at CIRM for Dr. Michor's birthday  | [link](exploratory/proximal/unconstrained/[WORKS]cirm_special.ipynb) |
-| Poisson Solver Test | Success | The Poisson solver is $O(1/N^2)$ as expected | [link](exploratory/proximal/unconstrained/[WORKS]test_poisson_error.ipynb) |
-| VS Jing et al. Scaling | Success | Test against the exact solution, ours better | [link](exploratory/proximal/unconstrained/[WORKS]ours_vs_jing_scaling.ipynb) |
-| VS Jing et al. Energy/Scaling Difference| Partial | Energy difference depends on scale, Scaling property fails for Jing | [link](exploratory/proximal/unconstrained/[PARTIAL]ours_vs_jing_energy_variance.ipynb) |
-| VS Jing et al. Continuity Equation | Success | The continuity equation is better satisfied for our algoritmh | [link](exploratory/proximal/unconstrained/[WORKS]ours_vs_jing_continuity_equation.ipynb)
-| VS Jing et al. Substitute Optimal Soln. | Success | Substituting our algorithm to their algorithm does not work well | [link](exploratory/proximal/unconstrained/[WORKS]ours_vs_jing_substitute_optimal.ipynb)|
-
-### Total mass constraint
-
-| Experiment        | Status    |            Note                 |   Folder            |
-|-------------------|-----------|-------------------------------- |--------------------------------|
-| SHK vs Constant Mass WFR    | Success   |  Comparing theoretical SHK geodesic & distance to our algorithm  | [link](exploratory/proximal/total_mass/[WORKS]constant_mass_vs_SHK.ipynb) |
-| Shrink and enlarge the same distribution    | Success   |   | [link](exploratory/proximal/total_mass/[WORKS]shrink_enlarge_same_dist.ipynb) |
-| Ours vs Jing et al. | Partial | Larger domain induces instability | [link](exploratory/proximal/total_mass/[PARTIAL]SHK_ours_vs_jing_gaussian.ipynb) |
-| ESI presentation | Partial | Moving Barrier is unstable | [link](exploratory/proximal/total_mass/[PARTIAL]ESI_presentation.ipynb) |
-
-### Inequality constraint
-
-| Experiment        | Status  | Note | Folder |
-|-------------------|---------|------|--------|
-| Inequality test   | Success | Density threshold constraint | [link](exploratory/proximal/inequality/[WORKS]inequality_test.ipynb) |
-| Local inequality constraints | Success | Local density threshold constraint | [link](exploratory/proximal/inequality/[WORKS]local_inequality_constraints.ipynb) |
-| Momentum constraint | Success | Momentum threshold constraint | [link](exploratory/proximal/inequality/[WORKS]momentum_constraint.ipynb) |
-
-### Barrier Constraint
-
-| Experiment        | Status    |            Note                 |   Folder            |
-|-------------------|-----------|-------------------------------- |--------------------------------|
-| One Stationary Wall    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_one_stationary_wall.ipynb) |
-| Two Stationary Walls    | Success   |    | [link](exploratory/proximal/barrier/[WORKS]going_around_two_stationary_wall.ipynb) |
-| One Stationary One Moving | Partial | Too big step size for the constraining function $H(t,x)$ leads to divergence| [link](exploratory/proximal/barrier/[PARTIAL]one_stationary_one_moving.ipynb)
-| Vanishing Walls | Partial | Same as above and the violation of continuity equation is higher than others | [link](exploratory/proximal/barrier/[PARTIAL]gradually_vanishing_walls.ipynb) |
-| Walls Do Not Touch Mass | Fails | Large step size of H makes the algo divergent | [link](exploratory\proximal\barrier\[FAILS]walls_do_not_touch_mass.ipynb)|
-| Splitting Cells | Partial | The domain splits in two. Similar results as previously (small H stepsize => convergent) | [link](exploratory\proximal\barrier\[PARTIAL]]splitting_cells.ipynb) |
-| Instability Analysis | Partial | Record the norms of the Lagrange multipliers. Barrier constraints have large norms in general. | [link](exploratory\proximal\barrier\[PARTIAL]instability_analysis.ipynb) |
-| HQH projection on Fisher-Rao | Partial | Compare numerical values before and after HQH projection with the Wall Do Not Touch Mass experiment. Mass on barriers increase. | [link](exploratory\proximal\barrier\[PARTIAL]instability_analysis.ipynb) |
-
-### Convex Curve Constraint
-
-| Experiment        | Status    |            Note                 |   Folder            |
-
-
-
-# Python Dynamic Optimal Transport
-
-The aim of this project is to implement various methods for the dynamic formulation of optimal transport, namely the optimization of the kinetic energy on the space of all solutions on the continuity equation. The most basic dynamic OT problem is the Benamou-Brenier formulation of the Wasserstein distance. Given probability densities $\rho_0(x)$ and $\rho_1(x)$ on $\mathbb{R}^d$, the square of the Wasserstein 2-distance is equal to the solution of the following optimization problem:
-
-$$\begin{align} &\textrm{minimize } \int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = 0, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$$
-
-We will implement the algorithm to solve this problem and its generalizations.
-
-# Features
-
-Our main aim is to implement the dynamical formulation of the Wasserstein-Fisher-Rao optimal transport, where we solve the following problem:
-
-$$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt+\delta^2\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|z(t,x)\|^2dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = \rho z, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$$
-
-We approach this problem by the `proximal` algorithm originally by Chizat et al. (2018).
+This code is heavily influenced by the Julia code for the unconstrained case ([link](https://github.com/lchizat/optimal-transport)) by Lénaïc Chizat.

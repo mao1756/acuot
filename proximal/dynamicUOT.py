@@ -1586,8 +1586,10 @@ def computeGeodesic(
     )
 
     Dlist = None
+    DRlist = None
     if track_terminal_distance:
         Dlist = nx.zeros(niter, type_as=rho0)
+        DRlist = nx.zeros(niter, type_as=rho0)
         xlist = []
 
     for i in range(niter):
@@ -1625,5 +1627,6 @@ def computeGeodesic(
         x_final = xlist[-1]
         for i in range(niter):
             Dlist[i] = (xlist[i] - x_final).norm()
+            DRlist[i] = Dlist[i] / xlist[i].norm()
 
-    return x, (Flist, Clist, Ilist, Dlist)
+    return x, (Flist, Clist, Ilist, Dlist, DRlist)
