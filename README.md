@@ -57,7 +57,7 @@ This example calculates the interpolation of rectangular mass under the constrai
 
 ```python
 import numpy as np
-from proximal.dynamicUOT import computeGeodesic
+from acuot.dynamicUOT import computeGeodesic
 K = 100 # Number of space grid points
 T = 15 # Number of time grid points
 rho_0 = np.zeros(K)
