@@ -76,7 +76,7 @@ The Jupyter notebooks in `paper` folder contains codes used to generate figures 
 - `003-convex-curve-constraint.ipynb`: Section 5.3 (Convex curve interpolation)
 - `004-constraints-on-control.ipyn`: Section 5.4 (Constraints on controls $\omega,\zeta$)
 - `005-mixed-constraint-france.ipynb`: Section 5.5 (Interpolation of population data in France)
-- `006-benchmark-compute-geodesic.py`: Appendix (The code to calculate the wall-clock time for each experiment)
+- `006-benchmark-compute-geodesic.ipynb`: Appendix (The code to calculate the wall-clock time for each experiment)
 
 ## Citation
 If you use this code, please cite the following:
