@@ -1,6 +1,6 @@
-import proximal.backend_extension as be
-import proximal.dynamicUOT as dyn
-import proximal.grids as gr
+import src.acuot.backend_extension as be
+import acuot.dynamicUOT as dyn
+import acuot.grids as gr
 import numpy as np
 import scipy as sp
 import torch
@@ -1227,10 +1227,13 @@ class TestVectorizeVFMultiF:
         V.D[1] = np.array(
             [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
         ).astype(np.float32)
-        V.Z = np.array(
+        V.D[2] = np.array(
             [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
         ).astype(np.float32)
-        F = np.array([37, 38]).astype(np.float32)
+        V.Z = np.array(
+            [[[37, 38], [39, 40], [41, 42]], [[43, 44], [45, 46], [47, 48]]]
+        ).astype(np.float32)
+        F = np.array([49, 50]).astype(np.float32)
         result = dyn.vectorize_VF_multiF(V, [F])
         expected = np.array(
             [
@@ -1258,6 +1261,32 @@ class TestVectorizeVFMultiF:
                 20,
                 22,
                 24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
             ]
         ).astype(np.float32)
         np.testing.assert_allclose(result, expected)
@@ -1274,10 +1303,13 @@ class TestVectorizeVFMultiF:
         V.D[1] = torch.tensor(
             [[[13, 14], [15, 16], [17, 18]], [[19, 20], [21, 22], [23, 24]]]
         ).float()
-        V.Z = torch.tensor(
+        V.D[2] = torch.tensor(
             [[[25, 26], [27, 28], [29, 30]], [[31, 32], [33, 34], [35, 36]]]
         ).float()
-        F = torch.tensor([37, 38]).float()
+        V.Z = torch.tensor(
+            [[[37, 38], [39, 40], [41, 42]], [[43, 44], [45, 46], [47, 48]]]
+        ).float()
+        F = torch.tensor([49, 50]).float()
         result = dyn.vectorize_VF_multiF(V, [F])
         expected = torch.tensor(
             [
@@ -1305,6 +1337,32 @@ class TestVectorizeVFMultiF:
                 20,
                 22,
                 24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
             ]
         ).float()
         torch.testing.assert_close(result, expected)
@@ -2234,9 +2292,10 @@ class TestComputeGeodesic:
         rho1 = np.array([1, 1, 1]).astype(np.float32)
         T = 5
         ll = (1.0, 1.0)
-        H = np.ones((T, 3), dtype=np.float32)
-        F = np.array([1, 1, 1, 1, 1], dtype=np.float32)
-        z, list = dyn.computeGeodesic(rho0, rho1, T, ll, H, F)
+        H = [[np.ones((T, 3)), np.zeros((T, 3)), np.zeros((T, 3))]]
+        GL = [np.array([1, 1, 1, 1, 1], dtype=np.float32)]
+        GU = [np.array([1, 1, 1, 1, 1], dtype=np.float32)]
+        z, list = dyn.computeGeodesic(rho0, rho1, T, ll, H, GL, GU)
         np.testing.assert_allclose(z.U.D[0], np.ones((T + 1, 3)))
         np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
         np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))
@@ -2263,7 +2322,7 @@ class TestComputeGeodesic:
         z, lists = dyn.computeGeodesic(
             rho_0, rho_1, T, (1.0, 1.0), H=H, GL=GL, GU=GU, niter=10000
         )
-        data = np.load("tests/proximal/test_cases/shk.npz")
+        data = np.load("tests/test_cases/shk.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.Z, data["U_Z"])
@@ -2300,7 +2359,7 @@ class TestComputeGeodesic:
         x, lists = dyn.computeGeodesic(
             rho_0, rho_1, T, ll, H=H, GL=GL, GU=GU, delta=delta, niter=3000
         )
-        data = np.load("tests/proximal/test_cases/total-mass-inequality-le0.8.npz")
+        data = np.load("tests/test_cases/total-mass-inequality-le0.8.npz")
         np.testing.assert_allclose(x.U.D[0], data["U_D0"])
         np.testing.assert_allclose(x.U.D[1], data["U_D1"])
         np.testing.assert_allclose(x.U.Z, data["U_Z"])
@@ -2312,8 +2371,8 @@ class TestComputeGeodesic:
         K = 30
         T = 15
         delta = 1.0
-        rho_0 = np.load("tests/proximal/test_cases/2D-total-mass-rho0.npy")
-        rho_1 = np.load("tests/proximal/test_cases/2D-total-mass-rho1.npy")
+        rho_0 = np.load("tests/test_cases/2D-total-mass-rho0.npy")
+        rho_1 = np.load("tests/test_cases/2D-total-mass-rho1.npy")
 
         # Calculate the constrained geodesic
         t = np.array([(i + 0.5) / T for i in range(T)])
@@ -2332,7 +2391,7 @@ class TestComputeGeodesic:
         z, lists = dyn.computeGeodesic(
             rho_0, rho_1, T, (1.0, 1.0, 1.0), H=H, GL=GL, GU=GU, niter=3000, delta=delta
         )
-        data = np.load("tests/proximal/test_cases/2D-total-mass.npz")
+        data = np.load("tests/test_cases/2D-total-mass.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.D[2], data["U_D2"])
@@ -2356,7 +2415,7 @@ class TestComputeGeodesic:
 
             return image_array
 
-        maze = 1 - image_to_numpy("tests/proximal/test_cases/maze.png").squeeze() / 255
+        maze = 1 - image_to_numpy("tests/test_cases/maze.png").squeeze() / 255
         T = 30
         N1 = maze.shape[0]
         N2 = maze.shape[1]
@@ -2387,7 +2446,7 @@ class TestComputeGeodesic:
         x_1, lists = dyn.computeGeodesic(
             rho_0_1, rho_1_1, T, ll, H=H, GL=GL, GU=GU, delta=10.0, niter=7000
         )
-        data = np.load("tests/proximal/test_cases/barrier-static.npz")
+        data = np.load("tests/test_cases/barrier-static.npz")
         np.testing.assert_allclose(x_1.U.D[0], data["U_D0"])
         np.testing.assert_allclose(x_1.U.D[1], data["U_D1"])
         np.testing.assert_allclose(x_1.U.D[2], data["U_D2"])
@@ -2434,7 +2493,7 @@ class TestComputeGeodesic:
 
             return filled_frames
 
-        maze = 1 - image_to_numpy("tests/proximal/test_cases/maze.png").squeeze() / 255
+        maze = 1 - image_to_numpy("tests/test_cases/maze.png").squeeze() / 255
         T = 30
         N1 = maze.shape[0]
         N2 = maze.shape[1]
@@ -2466,7 +2525,7 @@ class TestComputeGeodesic:
         x, lists = dyn.computeGeodesic(
             rho_0_1, rho_1_1, T, ll, H=H, GL=GL, GU=GU, delta=10.0, niter=7000
         )
-        data = np.load("tests/proximal/test_cases/barrier-moving.npz")
+        data = np.load("tests/test_cases/barrier-moving.npz")
         np.testing.assert_allclose(x.U.D[0], data["U_D0"])
         np.testing.assert_allclose(x.U.D[1], data["U_D1"])
         np.testing.assert_allclose(x.U.D[2], data["U_D2"])
@@ -2477,7 +2536,7 @@ class TestComputeGeodesic:
         np.testing.assert_allclose(x.V.Z, data["V_Z"])
 
     def test_computeGeodesic_ain(self):
-        inputs = np.load("tests/proximal/test_cases/ain-inputs.npz")
+        inputs = np.load("tests/test_cases/ain-inputs.npz")
         rho_0 = inputs["rho_0"]
         rho_1 = inputs["rho_1"]
         H1 = inputs["H1"]
@@ -2497,7 +2556,7 @@ class TestComputeGeodesic:
         z, lists = dyn.computeGeodesic(
             rho_0, rho_1, T, ll, H=H, GL=GL, GU=GU, niter=niter, delta=1.0
         )
-        data = np.load("tests/proximal/test_cases/ain.npz")
+        data = np.load("tests/test_cases/ain.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.D[2], data["U_D2"])
@@ -2567,7 +2626,7 @@ class TestComputeGeodesic:
             delta=0.01,
             periodic=True,
         )
-        data = np.load("tests/proximal/test_cases/convex-curve-symmetric.npz")
+        data = np.load("tests/test_cases/convex-curve-symmetric.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.Z, data["U_Z"])
@@ -2634,7 +2693,7 @@ class TestComputeGeodesic:
             delta=0.01,
             periodic=True,
         )
-        data = np.load("tests/proximal/test_cases/convex-curve-unsymmetric.npz")
+        data = np.load("tests/test_cases/convex-curve-unsymmetric.npz")
         np.testing.assert_allclose(z.U.D[0], data["U_D0"])
         np.testing.assert_allclose(z.U.D[1], data["U_D1"])
         np.testing.assert_allclose(z.U.Z, data["U_Z"])
@@ -2687,7 +2746,7 @@ class TestComputeGeodesic:
             delta=delta,
             niter=3000,
         )
-        data = np.load("tests/proximal/test_cases/river.npz")
+        data = np.load("tests/test_cases/river.npz")
         np.testing.assert_allclose(x2.U.D[0], data["U_D0"])
         np.testing.assert_allclose(x2.U.D[1], data["U_D1"])
         np.testing.assert_allclose(x2.U.D[2], data["U_D2"])
@@ -2756,7 +2815,7 @@ class TestComputeGeodesic:
             delta=0.5 / np.pi,
             niter=3000,
         )
-        data = np.load("tests/proximal/test_cases/budget.npz")
+        data = np.load("tests/test_cases/budget.npz")
         np.testing.assert_allclose(x.U.D[0], data["U_D0"])
         np.testing.assert_allclose(x.U.D[1], data["U_D1"])
         np.testing.assert_allclose(x.U.Z, data["U_Z"])

@@ -2,15 +2,15 @@
 
 This module collects the proximal operators, Poisson solvers, projection
 utilities, and Douglas-Rachford/PPXA schemes that power the dynamic
-unbalanced optimal transport (UOT) routines in :mod:`proximal`.  The
-implementations operate on the grid objects defined in :mod:`proximal.grids`
+unbalanced optimal transport (UOT) routines in :mod:`acuot`.  The
+implementations operate on the grid objects defined in :mod:`
 and are backend agnostic thanks to the :mod:`ot.backend` abstraction, so they
 work with both NumPy- and torch-based pipelines.
 """
 
-import proximal.grids as grids
-from proximal.backend_extension import get_backend_ext
-from proximal.backend_extension import NumpyBackend_ext, TorchBackend_ext
+from .grids import Cvar, Svar, CSvar, interp, interpT, interpT_
+from .backend_extension import get_backend_ext
+from .backend_extension import NumpyBackend_ext, TorchBackend_ext
 from ot.backend import Backend
 from ot.utils import list_to_array
 import numpy as np
@@ -72,7 +72,7 @@ def mdl(M, nx: Backend):
     return nx.sqrt(sum(m**2 for m in M))
 
 
-def proxA_(dest: grids.Cvar, M, gamma: float):
+def proxA_(dest: Cvar, M, gamma: float):
     """Project a stacked flux ``M`` onto the scaled L2 ball.
 
     The routine applies the proximal operator of ``gamma * ||M||_2`` by applying a
@@ -80,7 +80,7 @@ def proxA_(dest: grids.Cvar, M, gamma: float):
     ``dest`` in place.
 
     Args:
-        dest (grids.Cvar): Destination container receiving the projected fluxes.
+        dest (Cvar): Destination container receiving the projected fluxes.
         M (Sequence[array-like]): Sequence of flux components with identical
             shapes.
         gamma (float): Step size for the proximal operator.
@@ -123,7 +123,7 @@ def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
         destM[k][...] = DD * M[k]
 
 
-def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
+def proxF_(dest: Cvar, V: Cvar, gamma: float, p: float, q: float):
     """Evaluate the proximal map of the energy functional ``F``.
 
     The centred-grid variable ``V`` stores density and momentum terms whose
@@ -133,8 +133,8 @@ def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
     W2), Wasserstein-Fisher-Rao (WFR), or their mixed variants.
 
     Args:
-        dest (grids.Cvar): Output container updated in place.
-        V (grids.Cvar): Input centred-grid variable.
+        dest (Cvar): Output container updated in place.
+        V (Cvar): Input centred-grid variable.
         gamma (float): Proximal step size.
         p (float): Lp exponent that selects the transport norm (1 or 2).
         q (float): Lq exponent controlling the source term (<= 2).
@@ -275,7 +275,7 @@ def minus_interior_(dest, M, dpk, cs, dim):
     """Overwrite the interior slice of ``dest`` with ``M - dpk``.
 
     All arrays follow the staggered-grid convention used by
-    :class:`grids.Svar`, where axis ``dim`` stores an extra cell.  The update is
+    :class:`Svar`, where axis ``dim`` stores an extra cell.  The update is
     restricted to the interior cells - the entries that exclude the first element
     along ``dim``.
 
@@ -294,9 +294,7 @@ def minus_interior_(dest, M, dpk, cs, dim):
     dest[tuple(slices)] = interior_diff
 
 
-def projCE_(
-    dest: grids.Svar, U: grids.Svar, rho_0, rho_1, source: bool, periodic: bool = False
-):
+def projCE_(dest: Svar, U: Svar, rho_0, rho_1, source: bool, periodic: bool = False):
     """Project a staggered variable onto the continuity equation subspace.
 
     The projection enforces ``d_t rho + div(omega) = zeta`` (or its
@@ -305,8 +303,8 @@ def projCE_(
     ``dest`` in place.
 
     Args:
-        dest (grids.Svar): Output variable storing the projected staggered field.
-        U (grids.Svar): Input staggered variable before projection.
+        dest (Svar): Output variable storing the projected staggered field.
+        U (Svar): Input staggered variable before projection.
         rho_0 (array-like): Source density (initial condition).
         rho_1 (array-like): Target density (terminal condition).
         source (bool): Whether the formulation includes source terms (``q >= 1``).
@@ -381,7 +379,7 @@ def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
     dest[...] = invQ_slices
 
 
-def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
+def projinterp_(dest: CSvar, x: CSvar, Q, log=None):
     r"""Project ``(U, V)`` onto the linear constraint ``V = I(U)``.
 
     Given an input pair ``x = (U, V)``, the routine computes
@@ -393,8 +391,8 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     The projected pair ``(U', V')`` is written to ``dest`` in place.
 
     Args:
-        dest (grids.CSvar): Destination variable storing the projected pair.
-        x (grids.CSvar): Input centred/staggered variables ``(U, V)``.
+        dest (CSvar): Destination variable storing the projected pair.
+        x (CSvar): Input centred/staggered variables ``(U, V)``.
         Q (Sequence[array-like]): Per-dimension matrices representing
             ``Id + I^T I`` on the centred grid.
         log (dict, optional): Diagnostics dictionary; when provided, the norm of
@@ -405,7 +403,7 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     x_U_copy = x.U.copy()  # Copy x.U since interpT_ will overwrite x.U if dest=x
 
     # Calculate I*V and store it in U'
-    grids.interpT_(dest.U, x.V, dest.periodic)
+    interpT_(dest.U, x.V, dest.periodic)
     # Add U to I*V and store it in U'... (*)
     dest.U += x_U_copy
 
@@ -428,7 +426,7 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q, log=None):
     dest.interp_()
 
 
-def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=None):
+def projinterp_constraint_(dest: CSvar, x: CSvar, Q, HQH, H, F, log=None):
     r"""Project onto interpolation and affine constraints simultaneously.
 
     Given ``x = (U, V)``, the projection solves
@@ -449,8 +447,8 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     quantities are appended for diagnostics.
 
     Args:
-        dest (grids.CSvar): Output variable receiving ``(U', V')``.
-        x (grids.CSvar): Input pair prior to projection.
+        dest (CSvar): Output variable receiving ``(U', V')``.
+        x (CSvar): Input pair prior to projection.
         Q (Sequence[array-like]): Per-dimension matrices for ``Id + I^T I``.
         HQH (array-like): Matrix ``H (Id + I^T I)^{-1} H^*`` used to recover the
             Lagrange multipliers.
@@ -516,8 +514,8 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
     # HQ^{-1}H^* lambda = HQHlambda. This should be equal to HQ^{-1}(U+I*V)
     HQHlambda = [dest.nx.zeros(d.shape) for d in dest.U.D]
     HQHlambda[0] = Hstar_lambda
-    U_HQHlambda = grids.Svar(x.cs, x.ll, HQHlambda, dest.nx.zeros(x.cs))
-    V_HQHlambda = grids.interp(U_HQHlambda)
+    U_HQHlambda = Svar(x.cs, x.ll, HQHlambda, dest.nx.zeros(x.cs))
+    V_HQHlambda = interp(U_HQHlambda)
     HV_HQHlambda = (
         dest.nx.sum(H * V_HQHlambda.D[0], axis=tuple(range(1, H.ndim)))
         * math.prod(dest.ll[1:])
@@ -539,10 +537,10 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F, log=
 
     # Calculate I*(V'-V_copy)
     V_diff = dest.V - x.V
-    interpT_V_diff = grids.interpT(V_diff)
+    interpT_V_diff = interpT(V_diff)
 
     # Calculate the staggered variable H^* lambda
-    # U_hstar_lambda = grids.CSvar(x.rho0, x.rho1, x.cs[0], x.ll)
+    # U_hstar_lambda = CSvar(x.rho0, x.rho1, x.cs[0], x.ll)
     # U_hstar_lambda.U.D[0] = Hstar_lambda_copy
     # U_hstar_lambda = U_hstar_lambda.U
 
@@ -800,7 +798,7 @@ def unvectorize_VF(vec, F_shape, cs, ll):
     # Split the vector into V and F
     D = [nx.zeros(cs, type_as=vec) for _ in range(len(cs))]
     Z = nx.zeros(cs, type_as=vec)
-    V = grids.Cvar(cs, ll, D, Z)
+    V = Cvar(cs, ll, D, Z)
     F = vec[-F_shape:] if F_shape > 0 else None  # noqa: E203
     vec = (
         vec[:-F_shape].reshape(-1, math.prod(cs))
@@ -1040,7 +1038,7 @@ def precomputePPT(H, cs, ll, periodic=False):
 
 
 def projinterp_constraint_big_matrix(
-    dest: grids.CSvar, x: grids.CSvar, solve: callable, H, F, log=None, periodic=False
+    dest: CSvar, x: CSvar, solve: callable, H, F, log=None, periodic=False
 ):
     r"""Project using the explicit ``PP^T`` block system built by :func:`precomputePPT`.
 
@@ -1060,8 +1058,8 @@ def projinterp_constraint_big_matrix(
     applies ``(PP^T)^{-1}`` to vectors during the iterations.
 
     Args:
-        dest (grids.CSvar): Output pair ``(U', V')`` after projection.
-        x (grids.CSvar): Input pair ``(U, V)`` before projection.
+        dest (CSvar): Output pair ``(U', V')`` after projection.
+        x (CSvar): Input pair ``(U, V)`` before projection.
         solve (Callable[[array-like], array-like]): Linear solver that applies
             ``(PP^T)^{-1}`` to a vectorised residual.
         H (Sequence[array-like] | array-like): Constraint operators for each
@@ -1091,7 +1089,7 @@ def projinterp_constraint_big_matrix(
     if not isinstance(nx, NumpyBackend_ext):
         raise ValueError("The backend must be numpy. {} is not supported.".format(nx))
     # Calculate (O, F) - P(U, V) = (V - I(U), F - HV)
-    V_minus_IU = x.V - grids.interp(x.U, periodic=periodic)
+    V_minus_IU = x.V - interp(x.U, periodic=periodic)
     F_minus_HV = [
         F_i
         - nx.sum(x.V.D[0] * H_i, axis=tuple(range(1, H_i.ndim)))
@@ -1108,7 +1106,7 @@ def projinterp_constraint_big_matrix(
     )
 
     # Calculate (U', V') =  P^T(new_V, new_F) = (I* new_V, - new_V + H^*new_F )
-    dest.U = grids.interpT(new_V, periodic=periodic)
+    dest.U = interpT(new_V, periodic=periodic)
     Hstar_new_F = sum(
         H_i
         * new_F_i[(slice(None),) + (None,) * (H_i.ndim - 1)]
@@ -1123,9 +1121,7 @@ def projinterp_constraint_big_matrix(
     dest.V += x.V
 
 
-def project_constraint_inequality_single_(
-    dest: grids.CSvar, v: grids.CSvar, Hs: List, GL, GU
-):
+def project_constraint_inequality_single_(dest: CSvar, v: CSvar, Hs: List, GL, GU):
     r"""Project ``v`` onto the constraint ``GL(t) <= H(t, v) <= GU(t)``.
 
     Writing ``v = (rho, omega, zeta)`` and
@@ -1151,8 +1147,8 @@ def project_constraint_inequality_single_(
             \end{cases}
 
     Args:
-        dest (grids.CSvar): Destination variable overwritten with the projection.
-        v (grids.CSvar): Input variable to be projected.
+        dest (CSvar): Destination variable overwritten with the projection.
+        v (CSvar): Input variable to be projected.
         Hs (list[array-like]): Kernels ``[H_rho, H_omega0, H_omega1, ..., H_zeta]``.
         GL (array-like): Lower bounds of the constraint.
         GU (array-like): Upper bounds of the constraint.
@@ -1205,9 +1201,7 @@ def project_constraint_inequality_single_(
     dest.V.Z = v.V.Z - exp_mult * Hs[-1]
 
 
-def stepDR(
-    w: grids.CSvar, x: grids.CSvar, y: grids.CSvar, z: grids.CSvar, prox1, prox2, alpha
-):
+def stepDR(w: CSvar, x: CSvar, y: CSvar, z: CSvar, prox1, prox2, alpha):
     """Apply one step of the Douglas-Rachford algorithm to the variables
     w, x, y, and z."""
     # Step 1: Update x based on z and w
@@ -1226,9 +1220,9 @@ def stepDR(
 
 
 def stepPPXA(
-    x: grids.CSvar,
-    ys: List[grids.CSvar],
-    pis: List[grids.CSvar],
+    x: CSvar,
+    ys: List[CSvar],
+    pis: List[CSvar],
     proxs: List[callable],
     alpha: float,
 ):
@@ -1313,7 +1307,7 @@ def computeGeodesic_equality(
         V (array-like, optional): Initial ``V`` used when ``init == "manual"``.
 
     Returns:
-        tuple[grids.CSvar, tuple]: The converged variable ``z`` together with
+        tuple[CSvar, tuple]: The converged variable ``z`` together with
         diagnostic arrays ``(Flist, Clist, Ilist, HFlist)`` capturing the energy,
         continuity residual, interpolation residual, and (if ``H`` is provided)
         constraint violation per iteration.
@@ -1323,15 +1317,15 @@ def computeGeodesic_equality(
 
     nx = get_backend_ext(rho0, rho1)
 
-    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
+    def prox1(y: CSvar, x: CSvar, source, gamma, p, q, periodic=False):
         projCE_(
             y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
         )
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(
-        y: grids.CSvar,
-        x: grids.CSvar,
+        y: CSvar,
+        x: CSvar,
         Q,
         solve=None,
         HQH=None,
@@ -1372,9 +1366,7 @@ def computeGeodesic_equality(
             gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
 
     # Initialization
-    w, x, y, z = [
-        grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(4)
-    ]
+    w, x, y, z = [CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(4)]
 
     # Change of variable for scale adjustment
     for var in [w, x, y, z]:
@@ -1500,7 +1492,7 @@ def computeGeodesic(
             the distance of each iterate x to the last iterate.
 
     Returns:
-        tuple[grids.CSvar, tuple]: Final iterate ``x`` and diagnostic arrays
+        tuple[CSvar, tuple]: Final iterate ``x`` and diagnostic arrays
         ``(Flist, Clist, Ilist, HFlist)``.
     """
     assert delta > 0, "Delta must be positive"
@@ -1508,15 +1500,15 @@ def computeGeodesic(
 
     nx = get_backend_ext(rho0, rho1)
 
-    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q, periodic=False):
+    def prox1(y: CSvar, x: CSvar, source, gamma, p, q, periodic=False):
         projCE_(
             y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source, periodic
         )
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(
-        y: grids.CSvar,
-        x: grids.CSvar,
+        y: CSvar,
+        x: CSvar,
         Q,
     ):
         projinterp_(y, x, Q, log)
@@ -1567,8 +1559,8 @@ def computeGeodesic(
     # Initialization
     n_constraints = len(H) if H is not None else 0
     K = 2 + n_constraints  # Number of proximal operators
-    ys = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
-    pis = [grids.CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
+    ys = [CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
+    pis = [CSvar(rho0, rho1, T, ll, init, U, V, periodic) for _ in range(K)]
     x = sum(ys[1:], start=ys[0]) * (1.0 / len(ys))  # Average of the initial variables
 
     # Change of variable for scale adjustment

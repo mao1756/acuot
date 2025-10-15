@@ -411,3 +411,5 @@ base-pop-historiques-1876-2020.xlsx
 mixed-constraint-ain.npz
 paper/constrained_distance.npy
 paper/unconstrained_distance.npy
+
+*.egg-info/

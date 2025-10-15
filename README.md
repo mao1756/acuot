@@ -47,11 +47,16 @@ python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 ```
 
+#### 4) Install the package
+```bash
+pip install -e .
+```
 
-### Quick Start
+### Quick Demo
 This example calculates the interpolation of rectangular mass under the constraint that the total mass is 1. We remark that this algorithm assumes that the input is a density. In particular, the total mass being 1 means that $\sum \rho(x)\Delta x = 1$ instead of $\sum \rho(x) = 1$ where $\Delta x$ is a step size in space.
 
 ```python
+import numpy as np
 from proximal.dynamicUOT import computeGeodesic
 K = 100 # Number of space grid points
 T = 15 # Number of time grid points

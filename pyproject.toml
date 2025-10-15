@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acuot"
+version = "0.1.0"
+description = "Affine-Constrained Unbalanced Optimal Transport (ACUOT)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Mao Nishino" }]
+dependencies = [
+  "numpy>=2.1",
+  "scipy>=1.14",
+  "POT>=0.9.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/mao1756/acuot"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["acuot*"]

@@ -1,4 +1,4 @@
-from proximal.backend_extension import get_backend_ext
+from .backend_extension import get_backend_ext
 import numpy
 import math
 

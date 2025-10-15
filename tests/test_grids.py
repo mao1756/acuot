@@ -1,5 +1,5 @@
-import proximal.grids as g
-import proximal.backend_extension as pb
+import acuot.grids as g
+import acuot.backend_extension as pb
 import numpy as np
 import random
 import torch
