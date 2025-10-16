@@ -6,10 +6,10 @@
 
 ACUOT is a code for calculating an optimal interpolation between two distributions that may have different total masses while imposing the constraint on the interpolation path. For example, a problem of transporting a population of particles while avoiding obstacles can be solved using this code.
 
-ACUOT is based on the theory of [Wasserstein-Fisher-Rao optimal transport](https://arxiv.org/pdf/1506.06430), and seeks the interpolation path that miminizes the Wasserstein-Fisher-Rao energy while obeying the constraint.
+ACUOT is based on the theory of [Wasserstein-Fisher-Rao optimal transport](https://arxiv.org/pdf/1506.06430), and seeks the interpolation path that minimizes the Wasserstein-Fisher-Rao energy while obeying the constraint.
 
 ## Mathematical formulation
-ACUOT formally solves the following problem: for given two distributions $\rho_0(x), \rho_1(x)$ on a rectangular grid $\Omega$, we find the path of distributions $\rho(t,x) \in [0,\infty)$, the momentum of the mass $\omega(t,x) \in \mathbb{R}^d$, and the source term $\zeta(t, x) \in \mathbb{R}$ (controlls birth-death process of mass) that minimizes the Wasserstein-Fisher-Rao energy:
+ACUOT formally solves the following problem: for given two distributions $\rho_0(x), \rho_1(x)$ on a rectangular grid $\Omega$, we find the path of distributions $\rho(t,x) \in [0,\infty)$, the momentum of the mass $\omega(t,x) \in \mathbb{R}^d$, and the source term $\zeta(t, x) \in \mathbb{R}$ (controls birth-death process of mass) that minimizes the Wasserstein-Fisher-Rao energy:
 
 $$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\Omega} \frac{\|\omega(t, x)\|^2 + \delta^2|\zeta(t,x)|^2}{\rho(t,x)}dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\omega ) = \zeta, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x) \\ &L(t) \leq \int_{\Omega}H^{\rho}(t,x)\rho(t,x)dx + \int_{\Omega}H^{\omega}(t,x)\cdot \omega(t,x)dx + \int_{\Omega}H^{\zeta}(t,x)\zeta(t,x)dx \leq U(t) \end{align} \tag*{}$$
 
@@ -41,15 +41,17 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-#### 3) Upgrade tooling and install dependencies
-```bash
-python -m pip install --upgrade pip wheel
-pip install -r requirements.txt
-```
-
 #### 4) Install the package
 ```bash
+python -m pip install --upgrade pip
+# Only core dependency
 pip install -e .
+```
+If you want to run the notebooks on this repository, run this instead:
+```bash
+python -m pip install --upgrade pip
+# Core + all dependencies to run notebooks
+pip install -e .[notebook]
 ```
 
 ### Quick Demo
@@ -66,11 +68,11 @@ rho_0[0:10] = 10 # sum of rho_0 * (1/K) = 1
 rho_1[90:100] = 10
 GL = [np.ones(T)] # lower bound of total mass at each time
 GU = [np.ones(T)] # upper bound
-H = [[np.ones(K, T), np.zeros(K, T), np.zeros(K, T)]] # H^rho, H^omega, H^zeta. For multiple constraints, we have multiple inner lists
+H = [[np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]] # H^rho, H^omega, H^zeta. For multiple constraints, we have multiple inner lists
 ll = (1.0, 1.0) # The length of each dimension (time, space)
 x, lists = computeGeodesic(rho_0, rho_1, T, ll, H=H, GL=GL,GU=GU, niter=5000)
 # Now x.V.D[0][i] contains the density at time t=(i+1/2)/T, i=0,...,T-1
-# x.U.D[0][i] containts the density at time t=i/T, i=0,...,T
+# x.U.D[0][i] contains the density at time t=i/T, i=0,...,T
 # See the paper on the distinction between U(the staggered variable) and V(the centered variable)
 ```
 
