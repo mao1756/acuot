@@ -70,7 +70,7 @@ GL = [np.ones(T)] # lower bound of total mass at each time
 GU = [np.ones(T)] # upper bound
 H = [[np.ones((T, K)), np.zeros((T, K)), np.zeros((T, K))]] # H^rho, H^omega, H^zeta. For multiple constraints, we have multiple inner lists
 ll = (1.0, 1.0) # The length of each dimension (time, space)
-x, lists = computeGeodesic(rho_0, rho_1, T, ll, H=H, GL=GL,GU=GU, niter=5000)
+x, lists = computeGeodesic(rho_0, rho_1, T, ll, H=H, GL=GL,GU=GU, niter=5000, verbose=True)
 # Now x.V.D[0][i] contains the density at time t=(i+1/2)/T, i=0,...,T-1
 # x.U.D[0][i] contains the density at time t=i/T, i=0,...,T
 # See the paper on the distinction between U(the staggered variable) and V(the centered variable)
