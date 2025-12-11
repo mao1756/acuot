@@ -87,6 +87,17 @@ The Jupyter notebooks in `paper` folder contains codes used to generate figures 
 
 ## Citation
 If you use this code, please cite the following:
+```
+@misc{nishino2025benamoubrenierproximalsplittingmethod,
+      title={A Benamou-Brenier Proximal Splitting Method for Constrained Unbalanced Optimal Transport}, 
+      author={Mao Nishino and Martin Bauer and Tom Needham and Nicolas Charon},
+      year={2025},
+      eprint={2512.09250},
+      archivePrefix={arXiv},
+      primaryClass={math.OC},
+      url={https://arxiv.org/abs/2512.09250}, 
+}
+```
 
 ## License
 See [LICENSE](LICENSE).
