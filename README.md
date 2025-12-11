@@ -13,7 +13,7 @@ ACUOT formally solves the following problem: for given two distributions $\rho_0
 
 $$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\Omega} \frac{\|\omega(t, x)\|^2 + \delta^2|\zeta(t,x)|^2}{\rho(t,x)}dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\omega ) = \zeta, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x) \\ &L(t) \leq \int_{\Omega}H^{\rho}(t,x)\rho(t,x)dx + \int_{\Omega}H^{\omega}(t,x)\cdot \omega(t,x)dx + \int_{\Omega}H^{\zeta}(t,x)\zeta(t,x)dx \leq U(t) \end{align} \tag*{}$$
 
-Here, $\delta>0$ is the parameter that controls the ratio between the transport $\omega$ and the creation or destruction of mass $\zeta$. For more details, refer to our [theoretical paper](https://arxiv.org/abs/2402.15860) and numerical paper(TBD).
+Here, $\delta>0$ is the parameter that controls the ratio between the transport $\omega$ and the creation or destruction of mass $\zeta$. For more details, refer to our [theoretical paper](https://arxiv.org/abs/2402.15860) and [numerical paper](https://arxiv.org/abs/2512.09250).
 
 ## Getting Started
 
