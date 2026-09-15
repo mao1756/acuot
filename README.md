@@ -18,7 +18,7 @@ Here, $\delta>0$ is the parameter that controls the ratio between the transport 
 ## Getting Started
 
 ### Installation
-**Tested with:** Python 3.12 (we used 3.12.7) and the versions pinned in `requirements.txt`  
+**Tested with:** Python 3.12 (we used 3.12.7). Dependency requirements are declared in `pyproject.toml`.
 (Example stack used in the paper: NumPy 2.1.3, SciPy 1.14.1, POT 0.9.5.)
 
 #### 1) Clone the repository
@@ -41,17 +41,17 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-#### 4) Install the package
+#### 3) Install the package
 ```bash
 python -m pip install --upgrade pip
-# Only core dependency
+# Core dependencies
 pip install -e .
 ```
 If you want to run the notebooks on this repository, run this instead:
 ```bash
 python -m pip install --upgrade pip
-# Core + all dependencies to run notebooks
-pip install -e .[notebook]
+# Core + notebook dependencies
+pip install -e ".[notebooks]"
 ```
 
 ### Quick Demo
@@ -77,13 +77,15 @@ x, lists = computeGeodesic(rho_0, rho_1, T, ll, H=H, GL=GL,GU=GU, niter=5000, ve
 ```
 
 ## Notebooks
-The Jupyter notebooks in `paper` folder contains codes used to generate figures in the paper. The following shows the section(s) in the numerical paper covered by each notebook.
+The Jupyter notebooks in `paper` contain numerical experiments and figure-generation code. Paper section references are listed where applicable.
+
 - `001-total-mass-constraint.ipynb`: Section 5.1 (Total mass constraint)
 - `002-barrier-constraint.ipynb`: Section 5.2 (Static/moving barrier)
 - `003-convex-curve-constraint.ipynb`: Section 5.3 (Convex curve interpolation)
-- `004-constraints-on-control.ipyn`: Section 5.4 (Constraints on controls $\omega,\zeta$)
+- `004-constraints-on-control.ipynb`: Section 5.4 (Constraints on controls $\omega,\zeta$)
 - `005-mixed-constraint-france.ipynb`: Section 5.5 (Interpolation of population data in France)
 - `006-benchmark-compute-geodesic.ipynb`: Appendix (The code to calculate the wall-clock time for each experiment)
+- [008-toiam-dispersion-constraint.ipynb](paper/008-toiam-dispersion-constraint.ipynb): Colony dispersion with partial lineage information (TOIAM)
 
 ## Citation
 If you use this code, please cite the following:
