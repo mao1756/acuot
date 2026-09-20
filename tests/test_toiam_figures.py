@@ -5,8 +5,6 @@ import io
 import json
 from pathlib import Path
 import re
-import runpy
-import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -20,11 +18,26 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "paper"))
-from toiam_figures import (
-    DELTA, FIGURE_WIDTH_IN, MAX_FIGURE_HEIGHT_IN,
-    interval_pages, save_manuscript_pdf,
-)
+NOTEBOOK_PATH = ROOT / "paper/008-toiam-dispersion-constraint.ipynb"
+NOTEBOOK = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+CODE_CELLS = {
+    cell["id"]: "".join(cell["source"])
+    for cell in NOTEBOOK["cells"] if cell["cell_type"] == "code"
+}
+
+
+def run_cells(namespace, *cell_ids):
+    for cell_id in cell_ids:
+        exec(compile(CODE_CELLS[cell_id], f"{NOTEBOOK_PATH}:{cell_id}", "exec"), namespace)
+
+
+figure_helpers = dict(Path=Path, plt=plt, np=np)
+run_cells(figure_helpers, "manuscript-figure-helpers")
+DELTA = figure_helpers["DELTA"]
+FIGURE_WIDTH_IN = figure_helpers["FIGURE_WIDTH_IN"]
+MAX_FIGURE_HEIGHT_IN = figure_helpers["MAX_FIGURE_HEIGHT_IN"]
+interval_pages = figure_helpers["interval_pages"]
+save_manuscript_pdf = figure_helpers["save_manuscript_pdf"]
 
 
 class TestToiamFigures(unittest.TestCase):
@@ -54,7 +67,6 @@ class TestToiamFigures(unittest.TestCase):
             plt.close(fig)
 
     def test_all_solver_calls_use_fixed_delta_and_reuse_endpoint_percentages(self):
-        nb = json.loads((ROOT / "paper/008-toiam-dispersion-constraint.ipynb").read_text())
         for percentages, expected_calls in [([30, 50, 80], 6), ([0, 30, 100], 4)]:
             calls = []
 
@@ -69,8 +81,7 @@ class TestToiamFigures(unittest.TestCase):
                       H_lineage=[], GL_full=[], GU_full=[],
                       configured_constraints={p: ([], [], []) for p in percentages})
             with contextlib.redirect_stdout(io.StringIO()):
-                for i in (12, 13):
-                    exec("".join(nb["cells"][i]["source"]), ns)
+                run_cells(ns, "wfr-delta-experiments", "acuot-solves")
             self.assertEqual(len(calls), expected_calls)
             self.assertTrue(all(call["delta"] == 0.05 for call in calls))
             if 0 in percentages:
@@ -95,16 +106,17 @@ class TestToiamFigures(unittest.TestCase):
             y, x = np.meshgrid((np.arange(4) + 0.5) / 4,
                                (np.arange(3) + 0.5) / 4, indexing="ij")
             ns = dict(np=np, plt=plt, Image=Image, Path=Path, REPO_ROOT=ROOT,
-                      TOIAM_ROOT=directory, SEQUENCE="test", RAW_IMAGE_DIR=raw,
+                      TOIAM_ROOT=directory, SEQUENCE="test",
                       env_path=lambda _: None,
                       index_tiffs=lambda p: {int(f.stem): f for f in Path(p).glob("*.tif")},
                       tracking_files={k: tracking / f"{k}.tif" for k in range(4)},
                       tracks={1: (0, 3, 0)}, node_frames=np.arange(4), image_shape=(16, 12),
                       T_STEPS=3, NY=4, NX=3, LX=0.75, LY=1, DX=0.25, DY=0.25, X=x, Y=y,
                       cell_counts=np.ones(4), FRAME_DT_MINUTES=1, method_data=methods,
-                      RESULTS_DELTA=DELTA,
-                      OVERLAY_INTERVALS=[2, 0], OVERLAY_INTERVALS_PER_FIGURE=99,
-                      OVERLAY_PDF_DIR=directory / "pdfs")
+                      RESULTS_DELTA=DELTA)
+            run_cells(ns, "manuscript-figure-helpers", "microscope-overlay-config")
+            ns.update(RAW_IMAGE_DIR=raw, OVERLAY_INTERVALS=[2, 0],
+                      OVERLAY_INTERVALS_PER_FIGURE=99, OVERLAY_PDF_DIR=directory / "pdfs")
             seen = []
 
             def inspect():
@@ -117,14 +129,14 @@ class TestToiamFigures(unittest.TestCase):
                     self.assertGreater(ax.get_ylim()[0], ax.get_ylim()[1])
 
             with patch.object(plt, "show", inspect), contextlib.redirect_stdout(io.StringIO()):
-                result = runpy.run_path(str(ROOT / "paper/toiam_momentum_overlay.py"), init_globals=ns)
+                run_cells(ns, "microscope-overlay-data", "microscope-source-overlays")
             self.assertEqual(len(seen), 12)  # all six methods at both selected intervals
-            names = [p.name for p in result["overlay_figure_paths"]]
+            names = [p.name for p in ns["overlay_figure_paths"]]
             self.assertEqual(len(names), len(set(names)))
             self.assertTrue(all("delta-0.05" in name for name in names))
-            self.assertEqual([k for page in result["pages"] for k in page], [0, 2])
-            self.assertEqual(result["source_limit"], 5)
-            self.assertAlmostEqual(result["momentum_limit"], np.sqrt(50))
+            self.assertEqual([k for page in ns["pages"] for k in page], [0, 2])
+            self.assertEqual(ns["source_limit"], 5)
+            self.assertAlmostEqual(ns["momentum_limit"], np.sqrt(50))
 
 
 if __name__ == "__main__":
