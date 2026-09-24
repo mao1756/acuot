@@ -138,6 +138,59 @@ class TestToiamFigures(unittest.TestCase):
             self.assertEqual(ns["source_limit"], 5)
             self.assertAlmostEqual(ns["momentum_limit"], np.sqrt(50))
 
+    def test_publication_comparison_has_four_steps_and_legends_at_text_width(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            raw, tracking = directory / "raw", directory / "tracking"
+            raw.mkdir()
+            tracking.mkdir()
+            for frame in range(17):
+                Image.fromarray(np.arange(64, dtype=np.uint8).reshape(8, 8)).save(
+                    raw / f"{frame}.tif"
+                )
+                Image.fromarray(np.ones((8, 8), dtype=np.uint16)).save(
+                    tracking / f"{frame}.tif"
+                )
+            y, x = np.meshgrid((np.arange(4) + 0.5) / 4,
+                               (np.arange(3) + 0.5) / 4, indexing="ij")
+            methods = {}
+            for name, factor in (("WFR", 1), ("No-lineage ACUOT", 2)):
+                source = np.stack([(k + 1) * factor * (x - 0.5)
+                                   for k in range(16)])
+                mx = np.stack([(k + 1) * factor * np.ones_like(x) / 16
+                               for k in range(16)])
+                v = SimpleNamespace(D=[np.ones_like(source), -mx, mx], Z=source)
+                methods[name] = (SimpleNamespace(V=v), None, None, None, None)
+            ns = dict(np=np, plt=plt, Image=Image, Path=Path, REPO_ROOT=ROOT,
+                      TOIAM_ROOT=directory, SEQUENCE="test", env_path=lambda _: None,
+                      index_tiffs=lambda p: {int(f.stem): f for f in Path(p).glob("*.tif")},
+                      tracking_files={k: tracking / f"{k}.tif" for k in range(17)},
+                      tracks={1: (0, 16, 0)}, node_frames=np.arange(17),
+                      image_shape=(8, 8), T_STEPS=16, NY=4, NX=3,
+                      LX=0.75, LY=1, DX=0.25, DY=0.25, X=x, Y=y,
+                      cell_counts=np.ones(17), FRAME_DT_MINUTES=25,
+                      method_data=methods, RESULTS_DELTA=DELTA)
+            run_cells(ns, "manuscript-figure-helpers", "microscope-overlay-config")
+            ns.update(RAW_IMAGE_DIR=raw, PUBLICATION_PDF_PATH=directory / "publication.pdf")
+
+            def inspect():
+                fig = plt.gcf()
+                panels = [ax for ax in fig.axes if ax.images]
+                self.assertEqual(len(panels), 8)
+                self.assertEqual(len(ns["publication_legends"]), 3)
+                self.assertEqual(sum(any(isinstance(c, Quiver) for c in ax.collections)
+                                     for ax in panels), 6)
+                self.assertTrue(all(c.width >= 0.014 for ax in panels
+                                    for c in ax.collections if isinstance(c, Quiver)))
+                self.assertAlmostEqual(fig.get_size_inches()[0], FIGURE_WIDTH_IN)
+
+            with patch.object(plt, "show", inspect), contextlib.redirect_stdout(io.StringIO()):
+                run_cells(ns, "microscope-overlay-data", "publication-comparison")
+            box = re.search(rb"/MediaBox\s*\[([^]]+)\]",
+                            ns["publication_figure_path"].read_bytes())
+            _, _, width, _ = map(float, box.group(1).split())
+            self.assertAlmostEqual(width, 370.38374 * 72 / 72.27, places=7)
+
 
 if __name__ == "__main__":
     unittest.main()
